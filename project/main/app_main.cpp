@@ -21,6 +21,7 @@
 #include "mpu/math.hpp"
 #include "mpu/types.hpp"
 #include "hts221.hpp"
+#include "iot_bh1750.h"
 #include "lvgl.h"
 
 static const char *TAG = "APP_BADGE";
@@ -155,8 +156,10 @@ static void mpuISR(void*);
 static void mpuTask(void*);
 static void printTask(void*);
 hts221_handle_t hts221;
+bh1750_handle_t bh1750;
 int16_t temperature;
 int16_t humidity;
+float light;
 float roll{0}, pitch{0}, yaw{0};
 uint8_t mac[16];
 
@@ -166,6 +169,9 @@ extern "C" void app_main() {
     // Initialize I2C on port 0 using I2Cbus interface
     i2c0.begin(SDA, SCL, CLOCK_SPEED);
     hts221 = iot_hts221_create();
+    bh1750 = iot_bh1750_create(I2C_NUM_0, BH1750_I2C_ADDRESS_DEFAULT);
+    iot_bh1750_power_on(bh1750);
+    iot_bh1750_set_measure_mode(bh1750, BH1750_CONTINUE_4LX_RES);
     
     lv_init();
 
@@ -268,6 +274,7 @@ static IRAM_ATTR void mpuISR(TaskHandle_t taskHandle)
 
 static void printTask(void*)
 {
+    int ret;
     float last_temperature = 0, last_humidity = 0;
     uint8_t epaper_data[64];
 
@@ -277,6 +284,7 @@ static void printTask(void*)
         
         iot_hts221_get_temperature(hts221, &temperature);
         iot_hts221_get_humidity(hts221, &humidity);
+        ret = iot_bh1750_get_data(bh1750, &light);
         // if (abs(temperature - last_temperature) > 1*10) {
         //     sprintf((char *)epaper_data, " %.1f ℃", (float)(temperature/10));
         //     // lv_label_set_text(temp_label, (const char *)epaper_data);
@@ -289,6 +297,7 @@ static void printTask(void*)
         //     last_humidity = humidity;
         // }
         printf("temperature: %f\n humidity: %f\r\n", (float)(temperature/10), (float)(humidity/10));
+        printf("ret: %d, light: %f\n", ret, light);
         vTaskDelay(1000 / portTICK_PERIOD_MS);
     }
 }
