@@ -1,0 +1,43 @@
+*build
+.config
+*.o
+*.pyc
+project/**/sdkconfig
+project/**/sdkconfig.old
+
+# emacs
+.dir-locals.el
+
+# emacs temp file suffixes
+*~
+.#*
+\#*#
+
+# eclipse setting
+.settings
+
+# MacOS directory files
+.DS_Store
+
+# Doc build artifacts
+docs/*/_build/
+docs/*/doxygen-warning-log.txt
+docs/*/sphinx-warning-log.txt
+docs/*/sphinx-warning-log-sanitized.txt
+docs/*/xml/
+docs/*/xml_in/
+docs/*/man/
+docs/doxygen_sqlite3.db
+
+# VS Code Settings
+.vscode/
+
+# Clion Settings
+*.idea/
+
+# Clion build directory
+*cmake-build-debug
+
+# Tool chain
+*xtensa-esp32-elf
+*xtensa-esp32s2-elf

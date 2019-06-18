@@ -1,0 +1,15 @@
+[submodule "tools/esp-idf"]
+	path = tools/esp-idf
+	url = https://gitlab.espressif.cn:6688/idf/esp-idf.git
+[submodule "project/components/littlevgl/lvgl"]
+	path = project/components/littlevgl/lvgl
+	url = https://github.com/littlevgl/lvgl.git
+[submodule "project/components/littlevgl/lv_examples"]
+	path = project/components/littlevgl/lv_examples
+	url = https://github.com/littlevgl/lv_examples.git
+[submodule "project/components/I2Cbus"]
+	path = project/components/I2Cbus
+	url = https://github.com/natanaeljr/esp32-I2Cbus.git
+[submodule "project/components/MPUdriver"]
+	path = project/components/MPUdriver
+	url = https://github.com/natanaeljr/esp32-MPU-driver.git
