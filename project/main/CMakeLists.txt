@@ -1,4 +1,7 @@
-set(COMPONENT_SRCS "app_main.cpp")
-set(COMPONENT_ADD_INCLUDEDIRS ".")
+set(COMPONENT_SRCS "app_main.cpp" 
+                   "gui.c" 
+                   "seg_font.c" 
+                   "mouse_cursor_icon.c")
+set(COMPONENT_ADD_INCLUDEDIRS "include")
 
 register_component()

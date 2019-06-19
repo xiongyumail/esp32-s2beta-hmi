@@ -14,6 +14,7 @@
 #include "lwip/sockets.h"
 #include "lwip/dns.h"
 #include "lwip/netdb.h"
+#include "lwip/apps/sntp.h"
 #include "esp_log.h"
 #include "button.h"
 #include "I2Cbus.hpp"
@@ -22,13 +23,17 @@
 #include "mpu/types.hpp"
 #include "hts221.hpp"
 #include "iot_bh1750.h"
+#include "WS2812B.h"
 #include "lvgl.h"
+#include "lcd.h"
+#include "ft5x06.h"
+#include "gui.h"
 
 static const char *TAG = "APP_BADGE";
 
 static constexpr gpio_num_t SDA = GPIO_NUM_3;
 static constexpr gpio_num_t SCL = GPIO_NUM_5;
-static constexpr uint32_t CLOCK_SPEED = 100000;  // range from 100 KHz ~ 400Hz
+static constexpr uint32_t CLOCK_SPEED = 400000;  // range from 100 KHz ~ 400Hz
 
 /* MPU configuration */
 
@@ -152,6 +157,94 @@ static void button_press(uint8_t num, button_press_event_t button_press_event)
 
 }
 
+#include "lv_examples/lv_apps/demo/demo.h"
+#include "lv_examples/lv_apps/benchmark/benchmark.h"
+#include "lv_examples/lv_tests/lv_test.h"
+
+void IRAM_ATTR disp_flush(int32_t x1, int32_t y1, int32_t x2, int32_t y2, const lv_color_t* color_p)
+{
+    uint32_t len = (sizeof(uint16_t) * ((y2 - y1 + 1)*(x2 - x1 + 1)));
+
+    lcd_set_index(x1, y1, x2, y2);
+    lcd_write_data((uint16_t *)color_p, len);
+
+    lv_flush_ready();
+}
+
+bool IRAM_ATTR disp_input(lv_indev_data_t *data)
+{
+    static uint16_t x = 0, y = 0;
+    if (ft5x06_pos_read(&x, &y)) {
+        data->state = LV_INDEV_STATE_PR;
+    } else {
+        data->state =  LV_INDEV_STATE_REL;
+    }
+    // printf("x: %d, y: %d, state: %d\n", x, y, data->state);
+    data->point.x = x;   
+    data->point.y = y;
+    return false; /*No buffering so no more data read*/
+}
+
+static void memory_monitor(void * param)
+{
+    (void) param; /*Unused*/
+
+    lv_mem_monitor_t mon;
+    lv_mem_monitor(&mon);
+    printf("used: %6d (%3d %%), frag: %3d %%, biggest free: %6d, system free: %d\n", (int)mon.total_size - mon.free_size,
+           mon.used_pct,
+           mon.frag_pct,
+           (int)mon.free_biggest_size,
+           esp_get_free_heap_size());
+}
+
+static void gui_tick_task(void * arg)
+{
+    while(1) {
+        lv_tick_inc(10);
+        vTaskDelay(10 / portTICK_RATE_MS);
+    }
+}
+
+void gui_task(void *arg)
+{
+    
+    lcd_init();
+
+    xTaskCreate(gui_tick_task, "gui_tick_task", 512, NULL, 10, NULL);
+
+    lv_init();
+    lv_disp_drv_t disp_drv;               /*Descriptor of a display driver*/
+    lv_disp_drv_init(&disp_drv);          /*Basic initialization*/
+    disp_drv.disp_flush = disp_flush;     /*Set your driver function*/
+    lv_disp_drv_register(&disp_drv);      /*Finally register the driver*/
+
+    ft5x06_init();
+    lv_indev_drv_t indev_drv;
+    lv_indev_drv_init(&indev_drv);          /*Basic initialization*/
+    indev_drv.type = LV_INDEV_TYPE_POINTER;
+    indev_drv.read = disp_input;         /*This function will be called periodically (by the library) to get the mouse position and state*/
+    lv_indev_t * mouse_indev = lv_indev_drv_register(&indev_drv);
+
+    /*Set a cursor for the mouse*/
+    LV_IMG_DECLARE(mouse_cursor_icon);                          /*Declare the image file.*/
+    lv_obj_t * cursor_obj =  lv_img_create(lv_scr_act(), NULL); /*Create an image object for the cursor */
+    lv_img_set_src(cursor_obj, &mouse_cursor_icon);             /*Set the image source*/
+    lv_indev_set_cursor(mouse_indev, cursor_obj);               /*Connect the image  object to the driver*/
+
+    lv_task_create(memory_monitor, 3000, LV_TASK_PRIO_MID, NULL);
+
+    gui_init(lv_theme_material_init(0, NULL));
+    // benchmark_create();
+    // lv_test_theme_1(lv_theme_material_init(0, NULL));
+
+    while(1) {
+        lv_task_handler();
+        vTaskDelay(10 / portTICK_RATE_MS);
+    }
+}
+
+
 static void mpuISR(void*);
 static void mpuTask(void*);
 static void printTask(void*);
@@ -172,8 +265,9 @@ extern "C" void app_main() {
     bh1750 = iot_bh1750_create(I2C_NUM_0, BH1750_I2C_ADDRESS_DEFAULT);
     iot_bh1750_power_on(bh1750);
     iot_bh1750_set_measure_mode(bh1750, BH1750_CONTINUE_4LX_RES);
-    
-    lv_init();
+    WS2812B_init(RMT_CHANNEL_0, GPIO_NUM_4, 1);
+    wsRGB_t rgb = {0xff, 0xff, 0xff};
+    WS2812B_setLeds(&rgb, 1);
 
     ESP_LOGI(TAG, "[APP] Startup..");
     ESP_LOGI(TAG, "[APP] Free memory: %d bytes", esp_get_free_heap_size());
@@ -186,13 +280,29 @@ extern "C" void app_main() {
     esp_log_level_set("TRANSPORT", ESP_LOG_VERBOSE);
     esp_log_level_set("OUTBOX", ESP_LOG_VERBOSE);
 
-    nvs_flash_init();
+    //Initialize NVS
+    esp_err_t ret = nvs_flash_init();
+    if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+      ESP_ERROR_CHECK(nvs_flash_erase());
+      ret = nvs_flash_init();
+    }
+    ESP_ERROR_CHECK(ret);
+
+    ESP_LOGI(TAG, "Initializing SNTP");
+    // sntp_setoperatingmode(SNTP_OPMODE_POLL);
+    // sntp_setservername(0, "pool.ntp.org");
+    // sntp_init();
+    // setenv("TZ", "CST-8", 1);
+    // tzset();
+
     // wifi_init();
 
     // Create a task to setup mpu and read sensor data
     xTaskCreate(mpuTask, "mpuTask", 4 * 1024, nullptr, 6, nullptr);
     // Create a task to print angles
     xTaskCreate(printTask, "printTask", 2 * 1024, nullptr, 5, nullptr);
+
+    xTaskCreate(gui_task, "gui_task", 4096, NULL, 5, NULL);
 }
 
 /* Tasks */
@@ -263,18 +373,8 @@ static void mpuTask(void*)
     vTaskDelete(nullptr);
 }
 
-static IRAM_ATTR void mpuISR(TaskHandle_t taskHandle)
-{
-    BaseType_t HPTaskWoken = pdFALSE;
-    vTaskNotifyGiveFromISR(taskHandle, &HPTaskWoken);
-    if (HPTaskWoken == pdTRUE) {
-        portYIELD_FROM_ISR();
-    }
-}
-
 static void printTask(void*)
 {
-    int ret;
     float last_temperature = 0, last_humidity = 0;
     uint8_t epaper_data[64];
 
@@ -284,7 +384,7 @@ static void printTask(void*)
         
         iot_hts221_get_temperature(hts221, &temperature);
         iot_hts221_get_humidity(hts221, &humidity);
-        ret = iot_bh1750_get_data(bh1750, &light);
+        iot_bh1750_get_data(bh1750, &light);
         // if (abs(temperature - last_temperature) > 1*10) {
         //     sprintf((char *)epaper_data, " %.1f ℃", (float)(temperature/10));
         //     // lv_label_set_text(temp_label, (const char *)epaper_data);
@@ -297,7 +397,7 @@ static void printTask(void*)
         //     last_humidity = humidity;
         // }
         printf("temperature: %f\n humidity: %f\r\n", (float)(temperature/10), (float)(humidity/10));
-        printf("ret: %d, light: %f\n", ret, light);
+        printf("light: %f\n", light);
         vTaskDelay(1000 / portTICK_PERIOD_MS);
     }
 }
