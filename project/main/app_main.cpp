@@ -15,6 +15,7 @@
 #include "lwip/dns.h"
 #include "lwip/netdb.h"
 #include "lwip/apps/sntp.h"
+#include "driver/touch_pad.h"
 #include "esp_log.h"
 #include "button.h"
 #include "I2Cbus.hpp"
@@ -28,6 +29,7 @@
 #include "lcd.h"
 #include "ft5x06.h"
 #include "gui.h"
+#include "touch.h"
 
 static const char *TAG = "APP_BADGE";
 
@@ -257,18 +259,6 @@ float roll{0}, pitch{0}, yaw{0};
 uint8_t mac[16];
 
 extern "C" void app_main() {
-    esp_read_mac(mac, ESP_MAC_WIFI_STA);
-    button_init(button_press);
-    // Initialize I2C on port 0 using I2Cbus interface
-    i2c0.begin(SDA, SCL, CLOCK_SPEED);
-    hts221 = iot_hts221_create();
-    bh1750 = iot_bh1750_create(I2C_NUM_0, BH1750_I2C_ADDRESS_DEFAULT);
-    iot_bh1750_power_on(bh1750);
-    iot_bh1750_set_measure_mode(bh1750, BH1750_CONTINUE_4LX_RES);
-    WS2812B_init(RMT_CHANNEL_0, GPIO_NUM_4, 1);
-    wsRGB_t rgb = {0xff, 0xff, 0xff};
-    WS2812B_setLeds(&rgb, 1);
-
     ESP_LOGI(TAG, "[APP] Startup..");
     ESP_LOGI(TAG, "[APP] Free memory: %d bytes", esp_get_free_heap_size());
     ESP_LOGI(TAG, "[APP] IDF version: %s", esp_get_idf_version());
@@ -296,6 +286,20 @@ extern "C" void app_main() {
     // tzset();
 
     // wifi_init();
+
+    esp_read_mac(mac, ESP_MAC_WIFI_STA);
+    button_init(button_press);
+    // Initialize I2C on port 0 using I2Cbus interface
+    i2c0.begin(SDA, SCL, CLOCK_SPEED);
+    hts221 = iot_hts221_create();
+    bh1750 = iot_bh1750_create(I2C_NUM_0, BH1750_I2C_ADDRESS_DEFAULT);
+    iot_bh1750_power_on(bh1750);
+    iot_bh1750_set_measure_mode(bh1750, BH1750_CONTINUE_4LX_RES);
+    WS2812B_init(RMT_CHANNEL_0, GPIO_NUM_4, 1);
+    wsRGB_t rgb = {0xff, 0xff, 0xff};
+    WS2812B_setLeds(&rgb, 1);
+
+    touch_init();
 
     // Create a task to setup mpu and read sensor data
     xTaskCreate(mpuTask, "mpuTask", 4 * 1024, nullptr, 6, nullptr);

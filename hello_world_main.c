@@ -4,13 +4,38 @@
 #include "freertos/task.h"
 #include "driver/i2s.h"
 #include "esp_system.h"
+#include <math.h>
 #include "soc/i2s_struct.h"
 #include "soc/apb_ctrl_reg.h"
-#include "esp32s2beta/rom/lldesc.h"
-#include "esp32s2beta/rom/cache.h"
-#include "soc/dport_access.h"
-#include "soc/dport_reg.h"
-#include "lcd.h"
+#include "rom/lldesc.h"
+
+/*   I2S LCD interface configure part  */
+
+#define  WR  GPIO_NUM_4
+#define  RS  GPIO_NUM_3
+
+#define  D0  GPIO_NUM_20
+#define  D1  GPIO_NUM_19
+#define  D2  GPIO_NUM_18
+#define  D3  GPIO_NUM_17
+#define  D4  GPIO_NUM_16
+#define  D5  GPIO_NUM_15
+#define  D6  GPIO_NUM_14
+#define  D7  GPIO_NUM_13
+
+#define  D8  GPIO_NUM_12
+#define  D9  GPIO_NUM_11
+#define  D10  GPIO_NUM_10
+#define  D11  GPIO_NUM_9
+#define  D12  GPIO_NUM_8
+#define  D13  GPIO_NUM_7
+#define  D14  GPIO_NUM_6
+#define  D15  GPIO_NUM_5
+
+#define RS_LOW()   gpio_set_level(RS, 0)
+#define RS_HIGH()  gpio_set_level(RS, 1)
+
+#define LCD_DELAY_50US(n)   ets_delay_us(50 * n)
 
 typedef struct {
     uint8_t bit_width;
@@ -29,14 +54,18 @@ lcd_pin_def_t lcd_bus = {
 
 static lldesc_t __dma[250] = {0};
 
-static void i2s_lcd_config(void)
+int raw = 320, col = 480;
+
+SemaphoreHandle_t tx_sem = NULL;
+
+void i2s_lcd_config(void)
 {
     DPORT_CLEAR_PERI_REG_MASK(DPORT_PERIP_CLK_EN_REG, DPORT_I2S0_CLK_EN);
     DPORT_SET_PERI_REG_MASK(DPORT_PERIP_CLK_EN_REG, DPORT_I2S0_CLK_EN);
     DPORT_SET_PERI_REG_MASK(DPORT_PERIP_RST_EN_REG, DPORT_I2S0_RST);
     DPORT_CLEAR_PERI_REG_MASK(DPORT_PERIP_RST_EN_REG, DPORT_I2S0_RST);
 
-    //Configure pclk, max: 20M
+    //Configure pclk, max: 10M
     I2S0.clkm_conf.val = 0;
     I2S0.clkm_conf.clkm_div_num = 2;
     I2S0.clkm_conf.clkm_div_b = 0;
@@ -73,8 +102,13 @@ static void i2s_lcd_config(void)
     printf("--------I2S version  %x\n", I2S0.date);
 }
 
-static void i2s_lcd_set_pin(void)
+void i2s_lcd_set_pin(void)
 {
+    PIN_FUNC_SELECT(GPIO_PIN_MUX_REG[21], PIN_FUNC_GPIO);
+    gpio_set_direction(21, GPIO_MODE_OUTPUT);
+    gpio_set_pull_mode(21,GPIO_PULLUP_ONLY);
+    gpio_matrix_out(21, CLK_I2S_MUX_IDX, true, 0);
+
     PIN_FUNC_SELECT(GPIO_PIN_MUX_REG[lcd_bus.pin_clk], PIN_FUNC_GPIO);
     gpio_set_direction(lcd_bus.pin_clk, GPIO_MODE_OUTPUT);
     gpio_set_pull_mode(lcd_bus.pin_clk,GPIO_PULLUP_ONLY);
@@ -99,12 +133,10 @@ typedef struct i2s_isr_obj {
     uint16_t tangel;
 } i2s_isr_obj_t;
 
-static SemaphoreHandle_t tx_sem = NULL;
-
 static i2s_isr_obj_t i2s_fram_obj = {0};
 static int fram_ena_flag = 0;
 
-static void _i2s_isr(void)
+void _i2s_isr(void)
 {
     if(I2S0.int_st.out_eof) {
         BaseType_t HPTaskAwoken;
@@ -120,7 +152,7 @@ static void _i2s_isr(void)
     I2S0.int_clr.val = ~0;
 }
 
-static void i2s_lcd_interface_init(void)
+void i2s_lcd_if_init(void)
 {
     for(int i = 0; i < 30; i++) {
         __dma[i].size = 0;
@@ -138,6 +170,32 @@ static void i2s_lcd_interface_init(void)
     I2S0.int_ena.out_eof = 1;
 }
 
+#if 0
+static void _i2s_isr(void * param)
+{
+//    ets_printf("r\n");
+    i2s_isr_obj_t *p = (i2s_isr_obj_t *)param;
+    
+    if(I2S0.int_st.out_eof) {
+        lldesc_t *head = &__dma[0];
+        if(p->tangel == 0) {
+            head = &__dma[10];
+        }
+        for(int i = 0; i < 10; i++) {
+            head->owner = 1;
+            head->buf = p->fram_cur;
+            p->fram_cur += 3200;
+            head++;
+        }
+        p->tangel ^= 0x1;
+        if(p->fram_cur == p->fram_end) {
+            p->fram_cur = p->fram_sart;
+        }
+    }
+    I2S0.int_clr.val = I2S0.int_st.val;
+}
+
+#endif
 
 static inline void i2s_dma_start(void)
 {
@@ -147,7 +205,7 @@ static inline void i2s_dma_start(void)
     xSemaphoreTake(tx_sem, portMAX_DELAY);
 }
 
-static inline void i2s_lcd_dma_write(uint8_t *buf, size_t length)
+void i2s_lcd_dma_write(uint8_t *buf, size_t length)
 {
     int len = length;
     int trans_len = 0;
@@ -168,37 +226,123 @@ static inline void i2s_lcd_dma_write(uint8_t *buf, size_t length)
     I2S0.out_link.addr = ((uint32_t)&__dma[0]) & 0xfffff;
     i2s_dma_start();
 }
+#include "ppc.h"
+#include "rom/cache.h"
 
-static void lcd_write_reg(uint16_t cmd, uint16_t data)
+#define DESC__NUM (20)
+
+void lcd_draw_bmp(uint8_t *pic);
+
+void i2s_lcd_ena_fram_buf(void)
 {
+    uint8_t *pfram = (uint8_t *)heap_caps_calloc(1, sizeof(uint16_t) * 800 * 480, MALLOC_CAP_SPIRAM);
+    if(pfram == NULL){
+        printf("fram buf malloc fail\n");
+        return;
+    } else {
+        printf("%p\n", pfram);
+    }
+    uint8_t *ptr = (uint8_t *)pfram;
+    for(int i = 0; i < DESC__NUM; i++) {
+        __dma[i].size = 3200;
+        __dma[i].length = 3200;
+        __dma[i].owner = 1;
+        __dma[i].buf = ptr;
+        __dma[i].eof = 0;
+        __dma[i].empty = &__dma[(i+1) % DESC__NUM];
+        ptr += 3200;
+        if(i == 9 || i == 19) {
+            __dma[i].eof = 1;
+        }
+    }
+    i2s_fram_obj.fram_end = pfram + 800 *480 * 2;
+    i2s_fram_obj.fram_sart = pfram;
+    i2s_fram_obj.fram_cur = ptr;
+    i2s_fram_obj.tangel = 0;
+    I2S0.int_ena.val = 0;
+    I2S0.int_clr.val = ~0x0;
+    uint16_t *p2 = (uint16_t *)pfram;
+    uint16_t *p1 = (uint16_t *)gImage_pic;
+    for(int i = 0; i < 800 * 480; i++) {
+        p2[i] = p1[i];
+    }
+    Cache_WriteBack_All();
+    lcd_draw_bmp(pfram);
+    // vTaskDelay(3000/portTICK_PERIOD_MS);
+    esp_intr_alloc(ETS_I2S0_INTR_SOURCE, 0, _i2s_isr, (void *)&i2s_fram_obj, NULL);
+    I2S0.int_ena.out_eof = 1;
+    fram_ena_flag = 1;
+    I2S0.out_link.addr = ((uint32_t)&__dma[0]) & 0xfffff;
+    I2S0.fifo_conf.dscr_en = 1;
+    I2S0.out_link.start = 1;
+    I2S0.conf.tx_start = 1;
+    // i2s_lcd_dma_write(pfram, 800*2 * 2);
+}
+
+void lcd_write_reg(uint16_t cmd, uint16_t data)
+{
+#if 1
     RS_LOW();
     i2s_lcd_dma_write(&cmd, 2);
     RS_HIGH();
     i2s_lcd_dma_write(&data, 2);
+#else
+    RS_LOW();
+    // i2s_lcd_dma_write(&cmd, 2);
+    REG_WRITE(0x6000f000, cmd<<16);
+    I2S0.conf.tx_start = 1;
+    while (!(I2S0.state.tx_idle));
+    I2S0.conf.tx_start = 0;
+    I2S0.conf.tx_reset = 1;
+    I2S0.conf.tx_reset = 0;
+    RS_HIGH();
+    // i2s_lcd_dma_write(&data, 2);
+    REG_WRITE(0x6000f000, data<<16);
+    I2S0.conf.tx_start = 1;
+    while (!(I2S0.state.tx_idle));
+    I2S0.conf.tx_start = 0;
+    I2S0.conf.tx_reset = 1;
+    I2S0.conf.tx_reset = 0;
+#endif
 }
 
-static void lcd_write_cmd_byte(uint16_t cmd)
+void lcd_write_cmd_byte(uint16_t cmd)
 {
     RS_LOW();
+#if 1
     i2s_lcd_dma_write(&cmd, 2);
+#else
+    REG_WRITE(0x6000f000, cmd<<16);
+    I2S0.conf.tx_start = 1;
+    while (!(I2S0.state.tx_idle));
+    I2S0.conf.tx_start = 0;
+    I2S0.conf.tx_reset = 1;
+    I2S0.conf.tx_reset = 0;
+#endif
     RS_HIGH();
 }
 
-void IRAM_ATTR lcd_write_data(uint16_t *data, size_t len)
+void lcd_write_data_byte(uint16_t data)
 {
-    // int x = 0;
-    // for (x = 0; x < len / 4000; x++) {
-    //     i2s_lcd_dma_write(data, 4000);
-    //     data += 2000;
-    // }
-    // if (len % 4000) {
-    //     i2s_lcd_dma_write(data, len % 4000);
-    // }
-    i2s_lcd_dma_write((uint8_t *)data, len);
+#if 1
+    i2s_lcd_dma_write(&data, 2);
+#else
+    REG_WRITE(0x6000f000, data<<16);
+    I2S0.conf.tx_start = 1;
+    while (!(I2S0.state.tx_idle));
+    I2S0.conf.tx_start = 0;
+    I2S0.conf.tx_reset = 1;
+    I2S0.conf.tx_reset = 0;
+#endif
 }
 
-void lcd_set_index(uint16_t x_start,uint16_t y_start,uint16_t x_end,uint16_t y_end)
-{    
+void lcd_write_data_brust(uint8_t *buf, size_t length)
+{
+    i2s_lcd_dma_write(buf, length);
+}
+
+void lcd_set_win(uint16_t x_start, uint16_t x_end, uint16_t y_start, uint16_t y_end)
+{
     lcd_write_reg(0x2A00, (x_start >> 8));
     lcd_write_reg(0x2A01, (x_start & 0xff));
     lcd_write_reg(0x2A02, (x_end >> 8));
@@ -212,8 +356,42 @@ void lcd_set_index(uint16_t x_start,uint16_t y_start,uint16_t x_end,uint16_t y_e
     lcd_write_cmd_byte(0x2C00);
 }
 
-static void nt35510_init(void)
+void lcd_fill_box(uint16_t x_start, uint16_t x_end, uint16_t y_start, uint16_t y_end, uint16_t color)
 {
+    lcd_set_win(x_start, x_end, y_start, y_end);
+    int pix = ((x_end - x_start) + 1) * ( (y_end - y_start) + 1);
+    for(int i = 0; i < pix; i++) {
+        lcd_write_data_byte(color); 
+    }
+}
+
+void lcd_fill_screen(uint16_t color)
+{
+    lcd_set_win(0, 799, 0, 479);
+    uint16_t *buf = (uint16_t *)malloc(800 * 2);
+    for(int i = 0; i < 800; i++) {
+        buf[i] = color;
+    }
+    for(int i = 0; i < 480; i++) {
+        lcd_write_data_brust(buf, 800 * 2);
+    }
+    free(buf);
+}
+
+void lcd_draw_bmp(uint8_t *pic)
+{
+    lcd_set_win(0, 799, 0, 479);
+    uint16_t *buf = (uint16_t *)malloc(800 * 2);
+    for(int i = 0; i < 480; i++) {
+        memcpy(buf, pic + i * 800 * 2 , 800*2);
+        lcd_write_data_brust(buf, 800 * 2);
+    }
+    free(buf);
+}
+
+void nt35510_init(void)
+{
+    i2s_lcd_if_init();
     LCD_DELAY_50US(10);
     lcd_write_cmd_byte(0x0100);
     lcd_write_cmd_byte(0x0100);
@@ -602,8 +780,56 @@ static void nt35510_init(void)
     lcd_write_cmd_byte(0x2C00);
 }
 
-void lcd_init(void)
+uint16_t BBF[100] = {0x00, 0xffff, 0x00, 0xffff, 0x00, 0xffff, 0x00, 0xffff, 0x00, 0xffff};
+
+void lcd_edma_attach(void)
 {
-    i2s_lcd_interface_init();
+    I2S0.clkm_conf.clkm_div_num = 16;
+    I2S0.sample_rate_conf.tx_bck_div_num = 2;
+    uint8_t *pbuf = (uint8_t *)heap_caps_calloc(1, sizeof(uint16_t) * 800 * 480, MALLOC_CAP_SPIRAM);
+    if(pbuf == NULL) {
+        printf("pbuf NULL\n");
+        return;
+    }
+    memset(pbuf, 0, sizeof(uint16_t) * 800 * 480);
+    uint8_t *_buf = pbuf;
+    for(int i = 0; i < 250; i++) {
+        __dma[i].size = 3*1024;
+        __dma[i].length = 3*1024;
+        __dma[i].buf = _buf;
+        __dma[i].eof = 1;
+        __dma[i].empty = &__dma[(i+1) % 250];
+        _buf += 3*1024;
+    }
+    I2S0.int_ena.out_eof = 0;
+    I2S0.out_link.addr = ((uint32_t)&__dma[0]) & 0xfffff;
+    I2S0.out_link.start = 1;
+    I2S0.fifo_conf.dscr_en = 1;
+    I2S0.conf.tx_start = 1;
+}
+
+void app_main(void)
+{
     nt35510_init();
+    printf("lcd init done\n");
+    lcd_fill_screen(0x3c1c);
+    vTaskDelay(3000/portTICK_PERIOD_MS);
+    printf("start\n");
+    vTaskDelay(3000/portTICK_PERIOD_MS);
+    // i2s_lcd_ena_fram_buf();
+    // lcd_draw_bmp(gImage_pic);
+    lcd_edma_attach();
+    while(1) {
+        printf("%x\n", I2S0.int_raw.val);
+        vTaskDelay(1000/portTICK_PERIOD_MS);
+    }
+    int k = 0;
+    while(1) {
+         lcd_fill_screen(k);
+       // lcd_fill_box(10, 50, 10, 80, 0xc999);
+        k++;
+        if(k % 60 == 0) {
+            printf("..\n");
+        }
+    }
 }

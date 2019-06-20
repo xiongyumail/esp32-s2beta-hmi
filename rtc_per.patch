@@ -1,0 +1,715 @@
+From 39d3ab873af54d139216de1f06d4d646daa1a2a8 Mon Sep 17 00:00:00 2001
+From: chenjianqiang <chenjianqiang@espressif.com>
+Date: Fri, 14 Jun 2019 16:15:45 +0800
+Subject: [PATCH] feat(i2c): update i2c driver for esp32s2beta
+
+---
+ components/driver/i2c.c                       | 153 ++++++++++--
+ components/driver/include/driver/i2c.h        |   6 +-
+ components/soc/esp32s2beta/i2c_apll.h         |   3 +-
+ .../soc/esp32s2beta/include/soc/i2c_reg.h     |  10 +-
+ .../soc/esp32s2beta/include/soc/i2c_struct.h  | 221 +++++++++---------
+ components/soc/esp32s2beta/sources.cmake      |   4 +-
+ .../i2c/i2c_self_test/main/i2c_example_main.c |   6 +
+ 7 files changed, 266 insertions(+), 137 deletions(-)
+
+diff --git a/components/driver/i2c.c b/components/driver/i2c.c
+index aeadfaadaa..12b6d8c5f2 100644
+--- a/components/driver/i2c.c
++++ b/components/driver/i2c.c
+@@ -458,7 +458,11 @@ static void IRAM_ATTR i2c_isr_handler_default(void* arg)
+             if (p_i2c->mode == I2C_MODE_SLAVE) {
+                 int rx_fifo_cnt = I2C[i2c_num]->status_reg.rx_fifo_cnt;
+                 for (idx = 0; idx < rx_fifo_cnt; idx++) {
++                    #if CONFIG_IDF_TARGET_ESP32
+                     p_i2c->data_buf[idx] = I2C[i2c_num]->fifo_data.data;
++                    #elif CONFIG_IDF_TARGET_ESP32S2BETA
++                    p_i2c->data_buf[idx] = READ_PERI_REG(I2C_DATA_APB_REG(i2c_num));
++                    #endif
+                 }
+                 xRingbufferSendFromISR(p_i2c->rx_ring_buf, p_i2c->data_buf, rx_fifo_cnt, &HPTaskAwoken);
+                 I2C[i2c_num]->int_clr.rx_fifo_full = 1;
+@@ -500,7 +504,11 @@ static void IRAM_ATTR i2c_isr_handler_default(void* arg)
+         } else if (status & I2C_RXFIFO_FULL_INT_ST_M) {
+             int rx_fifo_cnt = I2C[i2c_num]->status_reg.rx_fifo_cnt;
+             for (idx = 0; idx < rx_fifo_cnt; idx++) {
++                #if CONFIG_IDF_TARGET_ESP32
+                 p_i2c->data_buf[idx] = I2C[i2c_num]->fifo_data.data;
++                #elif CONFIG_IDF_TARGET_ESP32S2BETA
++                p_i2c->data_buf[idx] = READ_PERI_REG(I2C_DATA_APB_REG(i2c_num));
++                #endif
+             }
+             xRingbufferSendFromISR(p_i2c->rx_ring_buf, p_i2c->data_buf, rx_fifo_cnt, &HPTaskAwoken);
+             I2C[i2c_num]->int_clr.rx_fifo_full = 1;
+@@ -543,6 +551,7 @@ esp_err_t i2c_get_data_mode(i2c_port_t i2c_num, i2c_trans_mode_t *tx_trans_mode,
+     return ESP_OK;
+ }
+ 
++#if CONFIG_IDF_TARGET_ESP32
+ /* Some slave device will die by accident and keep the SDA in low level,
+  * in this case, master should send several clock to make the slave release the bus.
+  * Slave mode of ESP32 might also get in wrong state that held the SDA low,
+@@ -705,6 +714,125 @@ esp_err_t i2c_param_config(i2c_port_t i2c_num, const i2c_config_t* i2c_conf)
+     return ESP_OK;
+ }
+ 
++#elif CONFIG_IDF_TARGET_ESP32S2BETA
++static esp_err_t i2c_master_clear_bus(i2c_port_t i2c_num)
++{
++    I2C_CHECK(i2c_num < I2C_NUM_MAX, I2C_NUM_ERROR_STR, ESP_ERR_INVALID_ARG);
++    I2C[i2c_num]->scl_sp_conf.scl_rst_slv_num = 9;
++    I2C[i2c_num]->scl_sp_conf.scl_rst_slv_en = 1;
++
++    return ESP_OK;
++}
++
++/**if the power and SDA/SCL wires are in proper condition, everything works find with reading the slave.
++ * If we remove the power supply for the slave during I2C is reading, or directly connect SDA or SCL to ground,
++ * this would cause the I2C FSM get stuck in wrong state, all we can do is to reset the I2C hardware in this case.
++ **/
++static esp_err_t i2c_hw_fsm_reset(i2c_port_t i2c_num)
++{
++    I2C_CHECK(i2c_num < I2C_NUM_MAX, I2C_NUM_ERROR_STR, ESP_ERR_INVALID_ARG);
++    uint32_t intr_mask = I2C_TRANS_COMPLETE_INT_ENA_M
++                         | I2C_TRANS_START_INT_ENA_M
++                         | I2C_ACK_ERR_INT_ENA_M
++                         | I2C_RXFIFO_OVF_INT_ENA_M
++                         | I2C_SLAVE_TRAN_COMP_INT_ENA_M
++                         | I2C_TIME_OUT_INT_ENA_M
++                         | I2C_ARBITRATION_LOST_INT_ENA_M;
++    I2C_ENTER_CRITICAL(&i2c_spinlock[i2c_num]);
++    I2C[i2c_num]->int_ena.val = 0;
++    i2c_master_clear_bus(i2c_num);
++
++    I2C[i2c_num]->ctr.fsm_rst = 1;
++    I2C[i2c_num]->ctr.fsm_rst = 0;
++    I2C[i2c_num]->fifo_conf.rx_fifo_rst = 1;
++    I2C[i2c_num]->fifo_conf.rx_fifo_rst = 0;
++    I2C[i2c_num]->fifo_conf.tx_fifo_rst = 1;
++    I2C[i2c_num]->fifo_conf.tx_fifo_rst = 0;
++    I2C[i2c_num]->int_clr.val = intr_mask;
++    I2C[i2c_num]->int_ena.val = intr_mask;
++
++    I2C_EXIT_CRITICAL(&i2c_spinlock[i2c_num]);
++    return ESP_OK;
++}
++
++esp_err_t i2c_param_config(i2c_port_t i2c_num, const i2c_config_t* i2c_conf)
++{
++    I2C_CHECK(i2c_num < I2C_NUM_MAX, I2C_NUM_ERROR_STR, ESP_ERR_INVALID_ARG);
++    I2C_CHECK(i2c_conf != NULL, I2C_ADDR_ERROR_STR, ESP_ERR_INVALID_ARG);
++    I2C_CHECK(i2c_conf->mode < I2C_MODE_MAX, I2C_MODE_ERR_STR, ESP_ERR_INVALID_ARG);
++
++    esp_err_t ret = i2c_set_pin(i2c_num, i2c_conf->sda_io_num, i2c_conf->scl_io_num,
++                                i2c_conf->sda_pullup_en, i2c_conf->scl_pullup_en, i2c_conf->mode);
++    uint32_t i2c_apb_clk = i2c_conf->use_ref_tick ? REF_CLK_FREQ : APB_CLK_FREQ;
++
++    if (ret != ESP_OK) {
++        return ret;
++    }
++    i2c_hw_enable(i2c_num);
++    ESP_LOGD(I2C_TAG, "i2c HW version: 0x%x", I2C[i2c_num]->date);
++    I2C_ENTER_CRITICAL(&i2c_spinlock[i2c_num]);
++    I2C[i2c_num]->ctr.rx_lsb_first = I2C_DATA_MODE_MSB_FIRST; //set rx data msb first
++    I2C[i2c_num]->ctr.tx_lsb_first = I2C_DATA_MODE_MSB_FIRST; //set tx data msb first
++    I2C[i2c_num]->ctr.ms_mode = i2c_conf->mode; //mode for master or slave
++    I2C[i2c_num]->ctr.sda_force_out = 1; // set open-drain output mode
++    I2C[i2c_num]->ctr.scl_force_out = 1; // set open-drain output mode
++    I2C[i2c_num]->ctr.sample_scl_level = 0; //sample at high level of clock
++    I2C[i2c_num]->ctr.ref_always_on = !i2c_conf->use_ref_tick;
++    I2C[i2c_num]->sda_filter_cfg.val = 0;
++    I2C[i2c_num]->scl_filter_cfg.val = 0;
++    if (i2c_conf->mode == I2C_MODE_SLAVE) {  //slave mode
++        I2C[i2c_num]->slave_addr.addr = i2c_conf->slave.slave_addr;
++        I2C[i2c_num]->slave_addr.en_10bit = i2c_conf->slave.addr_10bit_en;
++        I2C[i2c_num]->fifo_conf.nonfifo_en = 0;
++        I2C[i2c_num]->fifo_conf.fifo_addr_cfg_en = 0;
++        I2C[i2c_num]->fifo_conf.rx_fifo_full_thrhd = I2C_FIFO_FULL_THRESH_VAL;
++        I2C[i2c_num]->fifo_conf.tx_fifo_empty_thrhd = I2C_FIFO_EMPTY_THRESH_VAL;
++        I2C[i2c_num]->ctr.trans_start = 0;
++        I2C[i2c_num]->timeout.tout = I2C_SLAVE_TIMEOUT_DEFAULT;
++        //set timing for data
++        I2C[i2c_num]->sda_hold.time = I2C_SLAVE_SDA_HOLD_DEFAULT;
++        I2C[i2c_num]->sda_sample.time = I2C_SLAVE_SDA_SAMPLE_DEFAULT;
++    } else {
++        I2C[i2c_num]->fifo_conf.nonfifo_en = 0;
++        int cycle = (i2c_apb_clk / i2c_conf->master.clk_speed);
++        int half_cycle = cycle / 2;
++        I2C[i2c_num]->timeout.tout = cycle * I2C_MASTER_TOUT_CNUM_DEFAULT;
++        //set timing for data
++        I2C[i2c_num]->sda_hold.time = half_cycle / 2;
++        if(i2c_conf->use_ref_tick) {
++            int low_period = half_cycle;
++            int wait_high = 0;
++            int high_period = cycle - low_period - wait_high;
++
++            I2C[i2c_num]->sda_sample.time = high_period / 2;
++            I2C[i2c_num]->scl_low_period.period = low_period;
++            I2C[i2c_num]->scl_high_period.period = high_period;
++
++            I2C[i2c_num]->scl_high_period.scl_wait_high_period = wait_high;
++        } else {
++
++            int low_period = half_cycle;
++
++            int wait_high = 0;
++            int high_period = cycle - low_period - wait_high;
++            I2C[i2c_num]->sda_sample.time = high_period / 2;
++            I2C[i2c_num]->scl_low_period.period = low_period;
++            I2C[i2c_num]->scl_high_period.period = high_period;
++            I2C[i2c_num]->scl_high_period.scl_wait_high_period = wait_high;
++        }
++        //set timing for start signal
++        I2C[i2c_num]->scl_start_hold.time = half_cycle;
++        I2C[i2c_num]->scl_rstart_setup.time = half_cycle;
++        //set timing for stop signal
++        I2C[i2c_num]->scl_stop_hold.time = half_cycle;
++        I2C[i2c_num]->scl_stop_setup.time = half_cycle;
++
++    }
++    I2C_EXIT_CRITICAL(&i2c_spinlock[i2c_num]);
++    return ESP_OK;
++}
++#endif
++
+ esp_err_t i2c_set_period(i2c_port_t i2c_num, int high_period, int low_period)
+ {
+     I2C_CHECK(i2c_num < I2C_NUM_MAX, I2C_NUM_ERROR_STR, ESP_ERR_INVALID_ARG);
+@@ -1386,18 +1514,13 @@ int i2c_slave_write_buffer(i2c_port_t i2c_num, uint8_t* data, int size, TickType
+ 
+     portBASE_TYPE res;
+     int cnt = 0;
+-    portTickType ticks_start = xTaskGetTickCount();
++    portTickType ticks_end = xTaskGetTickCount() + ticks_to_wait;
+ 
+     res = xSemaphoreTake(p_i2c->slv_tx_mux, ticks_to_wait);
+     if (res == pdFALSE) {
+         return 0;
+     }
+-    TickType_t ticks_end = xTaskGetTickCount();
+-    if (ticks_end - ticks_start > ticks_to_wait) {
+-        ticks_to_wait = 0;
+-    } else {
+-        ticks_to_wait = ticks_to_wait - (ticks_end - ticks_start);
+-    }
++    ticks_to_wait = ticks_end - xTaskGetTickCount();
+     res = xRingbufferSend(p_i2c->tx_ring_buf, data, size, ticks_to_wait);
+     if (res == pdFALSE) {
+         cnt = 0;
+@@ -1432,28 +1555,18 @@ int i2c_slave_read_buffer(i2c_port_t i2c_num, uint8_t* data, size_t max_size, Ti
+ 
+     i2c_obj_t* p_i2c = p_i2c_obj[i2c_num];
+     portBASE_TYPE res;
+-    portTickType ticks_start = xTaskGetTickCount();
++    portTickType ticks_end = xTaskGetTickCount() + ticks_to_wait;
+     res = xSemaphoreTake(p_i2c->slv_rx_mux, ticks_to_wait);
+     if (res == pdFALSE) {
+         return 0;
+     }
+-    TickType_t ticks_end = xTaskGetTickCount();
+-    if (ticks_end - ticks_start > ticks_to_wait) {
+-        ticks_to_wait = 0;
+-    } else {
+-        ticks_to_wait = ticks_to_wait - (ticks_end - ticks_start);
+-    }
++    ticks_to_wait = ticks_end - xTaskGetTickCount();
+     int cnt = i2c_slave_read(i2c_num, data, max_size, ticks_to_wait);
+     if (cnt > 0) {
+         I2C_ENTER_CRITICAL(&i2c_spinlock[i2c_num]);
+         I2C[i2c_num]->int_ena.rx_fifo_full = 1;
+         I2C_EXIT_CRITICAL(&i2c_spinlock[i2c_num]);
+-        ticks_end = xTaskGetTickCount();
+-        if (ticks_end - ticks_start > ticks_to_wait) {
+-            ticks_to_wait = 0;
+-        } else {
+-            ticks_to_wait = ticks_to_wait - (ticks_end - ticks_start);
+-        }
++        ticks_to_wait = ticks_end - xTaskGetTickCount();
+         if (cnt < max_size && ticks_to_wait > 0) {
+             cnt += i2c_slave_read(i2c_num, data + cnt, max_size - cnt, ticks_to_wait);
+         }
+diff --git a/components/driver/include/driver/i2c.h b/components/driver/include/driver/i2c.h
+index 0bd0e2aaec..82dbb32b74 100644
+--- a/components/driver/include/driver/i2c.h
++++ b/components/driver/include/driver/i2c.h
+@@ -80,12 +80,14 @@ typedef enum {
+  * @brief I2C initialization parameters
+  */
+ typedef struct{
+-    i2c_mode_t mode;       /*!< I2C mode */
++    i2c_mode_t mode;              /*!< I2C mode */
+     gpio_num_t sda_io_num;        /*!< GPIO number for I2C sda signal */
+     gpio_pullup_t sda_pullup_en;  /*!< Internal GPIO pull mode for I2C sda signal*/
+     gpio_num_t scl_io_num;        /*!< GPIO number for I2C scl signal */
+     gpio_pullup_t scl_pullup_en;  /*!< Internal GPIO pull mode for I2C scl signal*/
+-
++    #if CONFIG_IDF_TARGET_ESP32S2BETA
++    bool use_ref_tick;            /*!< Set REF_TICK as the clock source */
++    #endif
+     union {
+         struct {
+             uint32_t clk_speed;     /*!< I2C clock frequency for master mode, (no higher than 1MHz for now) */
+diff --git a/components/soc/esp32s2beta/i2c_apll.h b/components/soc/esp32s2beta/i2c_apll.h
+index 935810afab..d82bcf8bac 100644
+--- a/components/soc/esp32s2beta/i2c_apll.h
++++ b/components/soc/esp32s2beta/i2c_apll.h
+@@ -24,7 +24,8 @@
+  */
+ 
+ #define I2C_APLL            0X6D
+-#define I2C_APLL_HOSTID     3
++#define I2C_APLL_HOSTID     1
++
+ 
+ #define I2C_APLL_IR_CAL_DELAY        0
+ #define I2C_APLL_IR_CAL_DELAY_MSB    3
+diff --git a/components/soc/esp32s2beta/include/soc/i2c_reg.h b/components/soc/esp32s2beta/include/soc/i2c_reg.h
+index 721fd2434c..66f04502a2 100644
+--- a/components/soc/esp32s2beta/include/soc/i2c_reg.h
++++ b/components/soc/esp32s2beta/include/soc/i2c_reg.h
+@@ -3,7 +3,7 @@
+ // Licensed under the Apache License, Version 2.0 (the "License");
+ // you may not use this file except in compliance with the License.
+ // You may obtain a copy of the License at
+-
++//
+ //     http://www.apache.org/licenses/LICENSE-2.0
+ //
+ // Unless required by applicable law or agreed to in writing, software
+@@ -747,6 +747,12 @@ extern "C" {
+ #define I2C_SDA_SAMPLE_TIME_S  0
+ 
+ #define I2C_SCL_HIGH_PERIOD_REG(i)          (REG_I2C_BASE(i) + 0x0038)
++/* I2C_SCL_WAIT_HIGH_PERIOD : R/W ;bitpos:[27:14] ;default: 14'b0 ; */
++/*description: */
++#define I2C_SCL_WAIT_HIGH_PERIOD  0x00003FFF
++#define I2C_SCL_WAIT_HIGH_PERIOD_M  ((I2C_SCL_WAIT_HIGH_PERIOD_V)<<(I2C_SCL_WAIT_HIGH_PERIOD_S))
++#define I2C_SCL_WAIT_HIGH_PERIOD_V  0x3FFF
++#define I2C_SCL_WAIT_HIGH_PERIOD_S  14
+ /* I2C_SCL_HIGH_PERIOD : R/W ;bitpos:[13:0] ;default: 14'b0 ; */
+ /*description: This register is used to configure the clock num during SCL is low level.*/
+ #define I2C_SCL_HIGH_PERIOD  0x00003FFF
+@@ -1102,7 +1108,7 @@ extern "C" {
+ #define I2C_SCL_RST_SLV_EN_S  0
+ 
+ #define I2C_DATE_REG(i)          (REG_I2C_BASE(i) + 0x00F8)
+-/* I2C_DATE : R/W ;bitpos:[31:0] ;default: 32'h18051600 ; */
++/* I2C_DATE : R/W ;bitpos:[31:0] ;default: 32'h18073100 ; */
+ /*description: */
+ #define I2C_DATE  0xFFFFFFFF
+ #define I2C_DATE_M  ((I2C_DATE_V)<<(I2C_DATE_S))
+diff --git a/components/soc/esp32s2beta/include/soc/i2c_struct.h b/components/soc/esp32s2beta/include/soc/i2c_struct.h
+index ec018b5e0c..f14269eb1d 100644
+--- a/components/soc/esp32s2beta/include/soc/i2c_struct.h
++++ b/components/soc/esp32s2beta/include/soc/i2c_struct.h
+@@ -3,7 +3,7 @@
+ // Licensed under the Apache License, Version 2.0 (the "License");
+ // you may not use this file except in compliance with the License.
+ // You may obtain a copy of the License at
+-
++//
+ //     http://www.apache.org/licenses/LICENSE-2.0
+ //
+ // Unless required by applicable law or agreed to in writing, software
+@@ -13,7 +13,6 @@
+ // limitations under the License.
+ #ifndef _SOC_I2C_STRUCT_H_
+ #define _SOC_I2C_STRUCT_H_
+-
+ #ifdef __cplusplus
+ extern "C" {
+ #endif
+@@ -21,22 +20,22 @@ extern "C" {
+ typedef volatile struct {
+     union {
+         struct {
+-            uint32_t period:14;             /*This register is used to configure the  low level width of SCL clock.*/
++            uint32_t period:        14;
+             uint32_t reserved14:    18;
+         };
+         uint32_t val;
+     } scl_low_period;
+     union {
+         struct {
+-            uint32_t sda_force_out:    1;           /*1：normally output sda data   0: exchange the function of sda_o and sda_oe (sda_o is the original internal output sda signal sda_oe is the enable bit for the internal output sda signal)*/
+-            uint32_t scl_force_out:    1;           /*1：normally output scl clock  0: exchange the function of scl_o and scl_oe (scl_o is the original internal output scl signal  scl_oe is the enable bit for the internal output scl signal)*/
+-            uint32_t sample_scl_level: 1;           /*Set this bit to sample data in SCL low level. clear this bit to sample data in SCL high level.*/
++            uint32_t sda_force_out:    1;
++            uint32_t scl_force_out:    1;
++            uint32_t sample_scl_level: 1;
+             uint32_t ack_level:        1;
+-            uint32_t ms_mode:          1;           /*Set this bit to configure the module as i2c master  clear this bit to configure the module as i2c slave.*/
+-            uint32_t trans_start:      1;           /*Set this bit to start sending data in tx_fifo.*/
+-            uint32_t tx_lsb_first:     1;           /*This bit is used to control the sending mode for  data need to be send. 1：receive data from most significant bit    0：receive data from least significant bit*/
+-            uint32_t rx_lsb_first:     1;           /*This bit is used to control the storage mode for received data. 1：receive data from most significant bit    0：receive data from least significant bit*/
+-            uint32_t clk_en:           1;           /*This is the clock gating control bit for reading or writing registers.*/
++            uint32_t ms_mode:          1;
++            uint32_t trans_start:      1;
++            uint32_t tx_lsb_first:     1;
++            uint32_t rx_lsb_first:     1;
++            uint32_t clk_en:           1;
+             uint32_t arbitration_en:   1;
+             uint32_t fsm_rst:          1;
+             uint32_t ref_always_on:    1;
+@@ -46,20 +45,20 @@ typedef volatile struct {
+     } ctr;
+     union {
+         struct {
+-            uint32_t ack_rec:             1;        /*This register stores the value of ACK bit.*/
+-            uint32_t slave_rw:            1;        /*when in slave mode  1：master read slave  0: master write slave.*/
+-            uint32_t time_out:            1;        /*when I2C takes more than time_out_reg clocks to receive a data then this register changes to high level.*/
+-            uint32_t arb_lost:            1;        /*when I2C lost control of SDA line  this register changes to high level.*/
+-            uint32_t bus_busy:            1;        /*1:I2C bus is busy transferring data. 0:I2C bus is in idle state.*/
+-            uint32_t slave_addressed:     1;        /*when configured as i2c slave  and the address send by master is equal to slave's address  then this bit will be high level.*/
+-            uint32_t byte_trans:          1;        /*This register changes to high level when one byte is transferred.*/
++            uint32_t ack_rec:             1;
++            uint32_t slave_rw:            1;
++            uint32_t time_out:            1;
++            uint32_t arb_lost:            1;
++            uint32_t bus_busy:            1;
++            uint32_t slave_addressed:     1;
++            uint32_t byte_trans:          1;
+             uint32_t reserved7:           1;
+-            uint32_t rx_fifo_cnt:         6;        /*This register represent the amount of data need to send.*/
++            uint32_t rx_fifo_cnt:         6;
+             uint32_t reserved14:          4;
+-            uint32_t tx_fifo_cnt:         6;        /*This register stores the amount of received data  in ram.*/
+-            uint32_t scl_main_state_last: 3;        /*This register stores the value of state machine for i2c module.  3'h0: SCL_MAIN_IDLE  3'h1: SCL_ADDRESS_SHIFT 3'h2: SCL_ACK_ADDRESS  3'h3: SCL_RX_DATA  3'h4 SCL_TX_DATA  3'h5:SCL_SEND_ACK 3'h6:SCL_WAIT_ACK*/
++            uint32_t tx_fifo_cnt:         6;
++            uint32_t scl_main_state_last: 3;
+             uint32_t reserved27:          1;
+-            uint32_t scl_state_last:      3;        /*This register stores the value of state machine to produce SCL. 3'h0: SCL_IDLE  3'h1:SCL_START   3'h2:SCL_LOW_EDGE  3'h3: SCL_LOW   3'h4:SCL_HIGH_EDGE   3'h5:SCL_HIGH  3'h6:SCL_STOP*/
++            uint32_t scl_state_last:      3;
+             uint32_t reserved31:          1;
+         };
+         uint32_t val;
+@@ -74,18 +73,18 @@ typedef volatile struct {
+     } timeout;
+     union {
+         struct {
+-            uint32_t addr:       15;                /*when configured as i2c slave  this register is used to configure slave's address.*/
+-            uint32_t reserved15: 16;
+-            uint32_t en_10bit:    1;                /*This register is used to enable slave 10bit address mode.*/
++            uint32_t addr:         15;
++            uint32_t reserved15:   16;
++            uint32_t en_10bit:      1;
+         };
+         uint32_t val;
+     } slave_addr;
+     union {
+         struct {
+-            uint32_t rx_fifo_start_addr: 5;         /*This is the offset address of the last receiving data as described in nonfifo_rx_thres_register.*/
+-            uint32_t rx_fifo_end_addr:   5;         /*This is the offset address of the first receiving data as described in nonfifo_rx_thres_register.*/
+-            uint32_t tx_fifo_start_addr: 5;         /*This is the offset address of the first  sending data as described in nonfifo_tx_thres register.*/
+-            uint32_t tx_fifo_end_addr:   5;         /*This is the offset address of the last  sending data as described in nonfifo_tx_thres register.*/
++            uint32_t rx_fifo_start_addr: 5;
++            uint32_t rx_fifo_end_addr:  5;
++            uint32_t tx_fifo_start_addr: 5;
++            uint32_t tx_fifo_end_addr:  5;
+             uint32_t rx_update:         1;
+             uint32_t tx_update:         1;
+             uint32_t tx_fifo_init_raddr: 5;
+@@ -96,39 +95,39 @@ typedef volatile struct {
+     union {
+         struct {
+             uint32_t rx_fifo_full_thrhd: 5;
+-            uint32_t tx_fifo_empty_thrhd:5;         /*Config tx_fifo empty threhd value when using apb fifo access*/
+-            uint32_t nonfifo_en:         1;         /*Set this bit to enble apb nonfifo access.*/
+-            uint32_t fifo_addr_cfg_en:   1;         /*When this bit is set to 1 then the byte after address represent the offset address of I2C Slave's ram.*/
+-            uint32_t rx_fifo_rst:        1;         /*Set this bit to reset rx fifo when using apb fifo access.*/
+-            uint32_t tx_fifo_rst:        1;         /*Set this bit to reset tx fifo when using apb fifo access.*/
+-            uint32_t nonfifo_rx_thres:   6;         /*when I2C receives more than nonfifo_rx_thres data  it will produce rx_send_full_int_raw interrupt and update the current offset address of the receiving data.*/
+-            uint32_t nonfifo_tx_thres:   6;         /*when I2C sends more than nonfifo_tx_thres data  it will produce tx_send_empty_int_raw interrupt and update the current offset address of the sending data.*/
++            uint32_t tx_fifo_empty_thrhd: 5;
++            uint32_t nonfifo_en:         1;
++            uint32_t fifo_addr_cfg_en:   1;
++            uint32_t rx_fifo_rst:        1;
++            uint32_t tx_fifo_rst:        1;
++            uint32_t nonfifo_rx_thres:   6;
++            uint32_t nonfifo_tx_thres:   6;
+             uint32_t reserved26:         6;
+         };
+         uint32_t val;
+     } fifo_conf;
+     union {
+         struct {
+-            uint8_t data;                           /*The register represent the byte  data read from rx_fifo when use apb fifo access*/
++            uint8_t data;
+             uint8_t reserved[3];
+         };
+         uint32_t val;
+     } fifo_data;
+     union {
+         struct {
+-            uint32_t rx_fifo_full:     1;           /*The raw interrupt status bit for rx_fifo full when use apb fifo access.*/
+-            uint32_t tx_fifo_empty:    1;           /*The raw interrupt status bit for tx_fifo empty when use apb fifo access.*/
+-            uint32_t rx_fifo_ovf:      1;           /*The raw interrupt status bit for receiving data overflow when use apb fifo access.*/
+-            uint32_t end_detect:       1;           /*The raw interrupt status bit for end_detect_int interrupt. when I2C deals with  the END command  it will produce end_detect_int interrupt.*/
+-            uint32_t slave_tran_comp:  1;           /*The raw interrupt status bit for slave_tran_comp_int interrupt. when I2C Slave detects the STOP bit  it will produce slave_tran_comp_int interrupt.*/
+-            uint32_t arbitration_lost: 1;           /*The raw interrupt status bit for arbitration_lost_int interrupt.when I2C lost the usage right of I2C BUS it will produce arbitration_lost_int interrupt.*/
+-            uint32_t master_tran_comp: 1;           /*The raw interrupt status bit for master_tra_comp_int interrupt. when I2C Master sends or receives a byte it will produce master_tran_comp_int interrupt.*/
+-            uint32_t trans_complete:   1;           /*The raw interrupt status bit for trans_complete_int interrupt. when I2C Master finished STOP command  it will produce trans_complete_int interrupt.*/
+-            uint32_t time_out:         1;           /*The raw interrupt status bit for time_out_int interrupt. when I2C takes a lot of time to receive a data  it will produce  time_out_int interrupt.*/
+-            uint32_t trans_start:      1;           /*The raw interrupt status bit for trans_start_int interrupt. when I2C sends the START bit it will produce trans_start_int interrupt.*/
+-            uint32_t ack_err:          1;           /*The raw interrupt status bit for ack_err_int interrupt. when I2C receives a wrong ACK bit  it will produce ack_err_int interrupt..*/
+-            uint32_t rx_rec_full:      1;           /*The raw interrupt status bit for rx_rec_full_int interrupt. when I2C receives more data  than nonfifo_rx_thres  it will produce rx_rec_full_int interrupt.*/
+-            uint32_t tx_send_empty:    1;           /*The raw interrupt status bit for tx_send_empty_int interrupt.when I2C sends more data than nonfifo_tx_thres  it will produce tx_send_empty_int interrupt..*/
++            uint32_t rx_fifo_full:             1;
++            uint32_t tx_fifo_empty:            1;
++            uint32_t rx_fifo_ovf:              1;
++            uint32_t end_detect:               1;
++            uint32_t slave_tran_comp:          1;
++            uint32_t arbitration_lost:         1;
++            uint32_t master_tran_comp:         1;
++            uint32_t trans_complete:           1;
++            uint32_t time_out:                 1;
++            uint32_t trans_start:              1;
++            uint32_t ack_err:                  1;
++            uint32_t rx_rec_full:              1;
++            uint32_t tx_send_empty:            1;
+             uint32_t scl_st_to:                1;
+             uint32_t scl_main_st_to:           1;
+             uint32_t det_start:                1;
+@@ -138,19 +137,19 @@ typedef volatile struct {
+     } int_raw;
+     union {
+         struct {
+-            uint32_t rx_fifo_full:     1;           /*Set this bit to clear the rx_fifo_full_int interrupt.*/
+-            uint32_t tx_fifo_empty:    1;           /*Set this bit to clear the tx_fifo_empty_int interrupt.*/
+-            uint32_t rx_fifo_ovf:      1;           /*Set this bit to clear the rx_fifo_ovf_int interrupt.*/
+-            uint32_t end_detect:       1;           /*Set this bit to clear the end_detect_int interrupt.*/
+-            uint32_t slave_tran_comp:  1;           /*Set this bit to clear the slave_tran_comp_int interrupt.*/
+-            uint32_t arbitration_lost: 1;           /*Set this bit to clear the arbitration_lost_int interrupt.*/
+-            uint32_t master_tran_comp: 1;           /*Set this bit to clear the master_tran_comp interrupt.*/
+-            uint32_t trans_complete:   1;           /*Set this bit to clear the trans_complete_int interrupt.*/
+-            uint32_t time_out:         1;           /*Set this bit to clear the time_out_int interrupt.*/
+-            uint32_t trans_start:      1;           /*Set this bit to clear the trans_start_int interrupt.*/
+-            uint32_t ack_err:          1;           /*Set this bit to clear the ack_err_int interrupt.*/
+-            uint32_t rx_rec_full:      1;           /*Set this bit to clear the rx_rec_full_int interrupt.*/
+-            uint32_t tx_send_empty:    1;           /*Set this bit to clear the tx_send_empty_int interrupt.*/
++            uint32_t rx_fifo_full:             1;
++            uint32_t tx_fifo_empty:            1;
++            uint32_t rx_fifo_ovf:              1;
++            uint32_t end_detect:               1;
++            uint32_t slave_tran_comp:          1;
++            uint32_t arbitration_lost:         1;
++            uint32_t master_tran_comp:         1;
++            uint32_t trans_complete:           1;
++            uint32_t time_out:                 1;
++            uint32_t trans_start:              1;
++            uint32_t ack_err:                  1;
++            uint32_t rx_rec_full:              1;
++            uint32_t tx_send_empty:            1;
+             uint32_t scl_st_to:                1;
+             uint32_t scl_main_st_to:           1;
+             uint32_t det_start:                1;
+@@ -160,19 +159,19 @@ typedef volatile struct {
+     } int_clr;
+     union {
+         struct {
+-            uint32_t rx_fifo_full:     1;           /*The enable bit for rx_fifo_full_int interrupt.*/
+-            uint32_t tx_fifo_empty:    1;           /*The enable bit for tx_fifo_empty_int interrupt.*/
+-            uint32_t rx_fifo_ovf:      1;           /*The enable bit for rx_fifo_ovf_int interrupt.*/
+-            uint32_t end_detect:       1;           /*The enable bit for end_detect_int interrupt.*/
+-            uint32_t slave_tran_comp:  1;           /*The enable bit for slave_tran_comp_int interrupt.*/
+-            uint32_t arbitration_lost: 1;           /*The enable bit for arbitration_lost_int interrupt.*/
+-            uint32_t master_tran_comp: 1;           /*The enable bit for master_tran_comp_int interrupt.*/
+-            uint32_t trans_complete:   1;           /*The enable bit for trans_complete_int interrupt.*/
+-            uint32_t time_out:         1;           /*The enable bit for time_out_int interrupt.*/
+-            uint32_t trans_start:      1;           /*The enable bit for trans_start_int interrupt.*/
+-            uint32_t ack_err:          1;           /*The enable bit for ack_err_int interrupt.*/
+-            uint32_t rx_rec_full:      1;           /*The enable bit for rx_rec_full_int interrupt.*/
+-            uint32_t tx_send_empty:    1;           /*The enable bit for tx_send_empty_int interrupt.*/
++            uint32_t rx_fifo_full:             1;
++            uint32_t tx_fifo_empty:            1;
++            uint32_t rx_fifo_ovf:              1;
++            uint32_t end_detect:               1;
++            uint32_t slave_tran_comp:          1;
++            uint32_t arbitration_lost:         1;
++            uint32_t master_tran_comp:         1;
++            uint32_t trans_complete:           1;
++            uint32_t time_out:                 1;
++            uint32_t trans_start:              1;
++            uint32_t ack_err:                  1;
++            uint32_t rx_rec_full:              1;
++            uint32_t tx_send_empty:            1;
+             uint32_t scl_st_to:                1;
+             uint32_t scl_main_st_to:           1;
+             uint32_t det_start:                1;
+@@ -182,19 +181,19 @@ typedef volatile struct {
+     } int_ena;
+     union {
+         struct {
+-            uint32_t rx_fifo_full:     1;            /*The masked interrupt status for rx_fifo_full_int interrupt.*/
+-            uint32_t tx_fifo_empty:    1;            /*The masked interrupt status for tx_fifo_empty_int interrupt.*/
+-            uint32_t rx_fifo_ovf:      1;            /*The masked interrupt status for rx_fifo_ovf_int interrupt.*/
+-            uint32_t end_detect:       1;            /*The masked interrupt status for end_detect_int interrupt.*/
+-            uint32_t slave_tran_comp:  1;            /*The masked interrupt status for slave_tran_comp_int interrupt.*/
+-            uint32_t arbitration_lost: 1;            /*The masked interrupt status for arbitration_lost_int interrupt.*/
+-            uint32_t master_tran_comp: 1;            /*The masked interrupt status for master_tran_comp_int interrupt.*/
+-            uint32_t trans_complete:   1;            /*The masked interrupt status for trans_complete_int interrupt.*/
+-            uint32_t time_out:         1;            /*The masked interrupt status for time_out_int interrupt.*/
+-            uint32_t trans_start:      1;            /*The masked interrupt status for trans_start_int interrupt.*/
+-            uint32_t ack_err:          1;            /*The masked interrupt status for ack_err_int interrupt.*/
+-            uint32_t rx_rec_full:      1;            /*The masked interrupt status for rx_rec_full_int interrupt.*/
+-            uint32_t tx_send_empty:    1;            /*The masked interrupt status for tx_send_empty_int interrupt.*/
++            uint32_t rx_fifo_full:            1;
++            uint32_t tx_fifo_empty:           1;
++            uint32_t rx_fifo_ovf:             1;
++            uint32_t end_detect:              1;
++            uint32_t slave_tran_comp:         1;
++            uint32_t arbitration_lost:        1;
++            uint32_t master_tran_comp:        1;
++            uint32_t trans_complete:          1;
++            uint32_t time_out:                1;
++            uint32_t trans_start:             1;
++            uint32_t ack_err:                 1;
++            uint32_t rx_rec_full:             1;
++            uint32_t tx_send_empty:           1;
+             uint32_t scl_st_to:               1;
+             uint32_t scl_main_st_to:          1;
+             uint32_t det_start:               1;
+@@ -204,67 +203,68 @@ typedef volatile struct {
+     } int_status;
+     union {
+         struct {
+-            uint32_t time:        10;                /*This register is used to configure the clock num I2C used to hold the data after the negedge of SCL.*/
+-            uint32_t reserved10:  22;
++            uint32_t time:         10;
++            uint32_t reserved10:   22;
+         };
+         uint32_t val;
+     } sda_hold;
+     union {
+         struct {
+-            uint32_t time:       10;                 /*This register is used to configure the clock num I2C used to sample data on SDA after the posedge of SCL*/
+-            uint32_t reserved10: 22;
++            uint32_t time:           10;
++            uint32_t reserved10:     22;
+         };
+         uint32_t val;
+     } sda_sample;
+     union {
+         struct {
+-            uint32_t period:     14;                 /*This register is used to configure the clock num during SCL is low level.*/
+-            uint32_t reserved14: 18;
++            uint32_t period:              14;
++            uint32_t scl_wait_high_period:14;
++            uint32_t reserved28:           4;
+         };
+         uint32_t val;
+     } scl_high_period;
+     uint32_t reserved_3c;
+     union {
+         struct {
+-            uint32_t time:       10;                /*This register is used to configure the clock num between the negedge of SDA and negedge of SCL for start mark.*/
+-            uint32_t reserved10: 22;
++            uint32_t time:               10;
++            uint32_t reserved10:         22;
+         };
+         uint32_t val;
+     } scl_start_hold;
+     union {
+         struct {
+-            uint32_t time:       10;                /*This register is used to configure the clock num between the posedge of SCL and the negedge of SDA for restart mark.*/
+-            uint32_t reserved10: 22;
++            uint32_t time:                 10;
++            uint32_t reserved10:           22;
+         };
+         uint32_t val;
+     } scl_rstart_setup;
+     union {
+         struct {
+-            uint32_t time:       14;                /*This register is used to configure the clock num after the STOP bit's posedge.*/
+-            uint32_t reserved14: 18;
++            uint32_t time:              14;
++            uint32_t reserved14:        18;
+         };
+         uint32_t val;
+     } scl_stop_hold;
+     union {
+         struct {
+-            uint32_t time:       10;                /*This register is used to configure the clock num between the posedge of SCL and the posedge of SDA.*/
+-            uint32_t reserved10: 22;
++            uint32_t time:               10;
++            uint32_t reserved10:         22;
+         };
+         uint32_t val;
+     } scl_stop_setup;
+     union {
+         struct {
+-            uint32_t thres:      3;                 /*When input SCL's pulse width is smaller than this register value  I2C ignores this pulse.*/
+-            uint32_t en:         1;                 /*This is the filter enable bit for SCL.*/
+-            uint32_t reserved4: 28;
++            uint32_t thres:            3;
++            uint32_t en:               1;
++            uint32_t reserved4:       28;
+         };
+         uint32_t val;
+     } scl_filter_cfg;
+     union {
+         struct {
+-            uint32_t thres:      3;                 /*When input SCL's pulse width is smaller than this register value  I2C ignores this pulse.*/
+-            uint32_t en:         1;                 /*This is the filter enable bit for SDA.*/
+-            uint32_t reserved4: 28;
++            uint32_t thres:            3;
++            uint32_t en:               1;
++            uint32_t reserved4:       28;
+         };
+         uint32_t val;
+     } sda_filter_cfg;
+@@ -327,11 +327,10 @@ typedef volatile struct {
+     uint32_t reserved_f4;
+     uint32_t date;                                  /**/
+     uint32_t reserved_fc;
+-    uint32_t ram_data[32];                          /*This the start address for ram when use apb nonfifo access.*/
++    uint32_t ram_data[32];                       /**/
+ } i2c_dev_t;
+ extern i2c_dev_t I2C0;
+ extern i2c_dev_t I2C1;
+-
+ #ifdef __cplusplus
+ }
+ #endif
+diff --git a/components/soc/esp32s2beta/sources.cmake b/components/soc/esp32s2beta/sources.cmake
+index 46acf7eb57..66bd3b8b0c 100644
+--- a/components/soc/esp32s2beta/sources.cmake
++++ b/components/soc/esp32s2beta/sources.cmake
+@@ -5,7 +5,9 @@ set(SOC_SRCS    "cpu_util.c"
+                 "rtc_sleep.c"
+                 "rtc_time.c"
+                 "soc_memory_layout.c"
+-                "spi_periph.c")
++                "spi_periph.c"
++                "gpio_periph.c"
++                "rtc_periph.c")
+ 
+ if(NOT CMAKE_BUILD_EARLY_EXPANSION)
+     set_source_files_properties("esp32s2beta/rtc_clk.c" PROPERTIES
+diff --git a/examples/peripherals/i2c/i2c_self_test/main/i2c_example_main.c b/examples/peripherals/i2c/i2c_self_test/main/i2c_example_main.c
+index 9b108a9aa6..eba5b66f54 100644
+--- a/examples/peripherals/i2c/i2c_self_test/main/i2c_example_main.c
++++ b/examples/peripherals/i2c/i2c_self_test/main/i2c_example_main.c
+@@ -151,6 +151,9 @@ static esp_err_t i2c_master_init()
+     conf.scl_io_num = I2C_MASTER_SCL_IO;
+     conf.scl_pullup_en = GPIO_PULLUP_ENABLE;
+     conf.master.clk_speed = I2C_MASTER_FREQ_HZ;
++#if CONFIG_IDF_TARGET_ESP32S2BETA
++    conf.use_ref_tick = false;
++#endif
+     i2c_param_config(i2c_master_port, &conf);
+     return i2c_driver_install(i2c_master_port, conf.mode,
+                               I2C_MASTER_RX_BUF_DISABLE,
+@@ -171,6 +174,9 @@ static esp_err_t i2c_slave_init()
+     conf_slave.mode = I2C_MODE_SLAVE;
+     conf_slave.slave.addr_10bit_en = 0;
+     conf_slave.slave.slave_addr = ESP_SLAVE_ADDR;
++#if CONFIG_IDF_TARGET_ESP32S2BETA
++    conf_slave.use_ref_tick = false;
++#endif
+     i2c_param_config(i2c_slave_port, &conf_slave);
+     return i2c_driver_install(i2c_slave_port, conf_slave.mode,
+                               I2C_SLAVE_RX_BUF_LEN,
+-- 
+2.18.1
+
