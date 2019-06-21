@@ -163,17 +163,19 @@ static void button_press(uint8_t num, button_press_event_t button_press_event)
 #include "lv_examples/lv_apps/benchmark/benchmark.h"
 #include "lv_examples/lv_tests/lv_test.h"
 
-void IRAM_ATTR disp_flush(int32_t x1, int32_t y1, int32_t x2, int32_t y2, const lv_color_t* color_p)
-{
-    uint32_t len = (sizeof(uint16_t) * ((y2 - y1 + 1)*(x2 - x1 + 1)));
+static lv_disp_t  * disp;
 
-    lcd_set_index(x1, y1, x2, y2);
+void IRAM_ATTR disp_flush(lv_disp_drv_t * disp_drv, const lv_area_t * area, lv_color_t * color_p)
+{
+    uint32_t len = (sizeof(uint16_t) * ((area->y2 - area->y1 + 1)*(area->x2 - area->x1 + 1)));
+
+    lcd_set_index(area->x1, area->y1, area->x2, area->y2);
     lcd_write_data((uint16_t *)color_p, len);
 
-    lv_flush_ready();
+    lv_disp_flush_ready(disp_drv);
 }
 
-bool IRAM_ATTR disp_input(lv_indev_data_t *data)
+bool IRAM_ATTR disp_input(lv_indev_drv_t * indev_drv, lv_indev_data_t * data)
 {
     static uint16_t x = 0, y = 0;
     if (ft5x06_pos_read(&x, &y)) {
@@ -187,7 +189,7 @@ bool IRAM_ATTR disp_input(lv_indev_data_t *data)
     return false; /*No buffering so no more data read*/
 }
 
-static void memory_monitor(void * param)
+void memory_monitor(lv_task_t * param)
 {
     (void) param; /*Unused*/
 
@@ -208,24 +210,32 @@ static void gui_tick_task(void * arg)
     }
 }
 
+static lv_color_t lv_buf[LV_HOR_RES_MAX * LV_VER_RES_MAX / 10];
+
 void gui_task(void *arg)
 {
-    
     lcd_init();
 
     xTaskCreate(gui_tick_task, "gui_tick_task", 512, NULL, 10, NULL);
 
     lv_init();
-    lv_disp_drv_t disp_drv;               /*Descriptor of a display driver*/
-    lv_disp_drv_init(&disp_drv);          /*Basic initialization*/
-    disp_drv.disp_flush = disp_flush;     /*Set your driver function*/
-    lv_disp_drv_register(&disp_drv);      /*Finally register the driver*/
+    /*Create a display buffer*/
+    static lv_disp_buf_t disp_buf;
+    
+    lv_disp_buf_init(&disp_buf, lv_buf, NULL, LV_HOR_RES_MAX * LV_VER_RES_MAX / 10);
+
+    /*Create a display*/
+    lv_disp_drv_t disp_drv;
+    lv_disp_drv_init(&disp_drv);  
+    disp_drv.buffer = &disp_buf;
+    disp_drv.flush_cb = disp_flush;  
+    disp = lv_disp_drv_register(&disp_drv);
 
     ft5x06_init();
     lv_indev_drv_t indev_drv;
     lv_indev_drv_init(&indev_drv);          /*Basic initialization*/
     indev_drv.type = LV_INDEV_TYPE_POINTER;
-    indev_drv.read = disp_input;         /*This function will be called periodically (by the library) to get the mouse position and state*/
+    indev_drv.read_cb = disp_input;         /*This function will be called periodically (by the library) to get the mouse position and state*/
     lv_indev_t * mouse_indev = lv_indev_drv_register(&indev_drv);
 
     /*Set a cursor for the mouse*/

@@ -14,7 +14,7 @@ typedef struct {
 source_t source[3] = {0};
 #define SOURCE_MASK_COLOR "ff3034"
 
-void time_write(void *arg)
+void time_write(lv_task_t * arg)
 {
     time_t now;
     struct tm timeinfo;
@@ -28,7 +28,7 @@ void time_write(void *arg)
         sprintf(strftime_buf, "%02d#ffffff :#%02d", timeinfo.tm_hour, timeinfo.tm_min);
     }
     
-    lv_label_set_text((lv_obj_t *)(arg), strftime_buf);
+    lv_label_set_text((lv_obj_t *)(arg->user_data), strftime_buf);
 }
 
 void source_write(source_t source)
@@ -61,18 +61,18 @@ static void header_create(void)
     lv_obj_t * clock = lv_label_create(header, NULL);
     lv_obj_align(clock, NULL, LV_ALIGN_IN_LEFT_MID, LV_DPI/10, 0);
     lv_label_set_recolor(clock, true);
-    time_write(clock);
+    // time_write(clock);
     lv_task_create(time_write, 1000, LV_TASK_PRIO_MID, (void *)(clock));
 
     lv_obj_t * state = lv_label_create(header, NULL);
-    lv_label_set_text(state, SYMBOL_SETTINGS);
+    lv_label_set_text(state, LV_SYMBOL_SETTINGS);
     lv_obj_align(state, NULL, LV_ALIGN_CENTER, 0, 0);
 
     lv_obj_t * sym = lv_label_create(header, NULL);
-    lv_label_set_text(sym, SYMBOL_WIFI SYMBOL_BATTERY_FULL);
+    lv_label_set_text(sym, LV_SYMBOL_WIFI LV_SYMBOL_BATTERY_FULL);
     lv_obj_align(sym, NULL, LV_ALIGN_IN_RIGHT_MID, -LV_DPI/10, 0);
 
-    lv_cont_set_fit(header, false, true);   /*Let the height set automatically*/
+    lv_cont_set_fit2(header, false, true);   /*Let the height set automatically*/
     lv_obj_set_pos(header, 0, 0);
 }
 
@@ -85,24 +85,24 @@ static void side_create(void)
     
     // lv_obj_t * label = lv_label_create(list, NULL);
     // char str[16] = {0xf4,0x91,'\0'};
-    // lv_label_set_text(label, _SYMBOL_VALUE3(EF,A0,80));
+    // lv_label_set_text(label, _LV_SYMBOL_VALUE3(EF,A0,80));
     // // lv_obj_set_style(label, &style_txt);
-    // printf("font: %s\n", _SYMBOL_VALUE3(EF,A0,80));
+    // printf("font: %s\n", _LV_SYMBOL_VALUE3(EF,A0,80));
 
     lv_obj_t * list_btn;
-    list_btn = lv_list_add(list, SYMBOL_GPS,  "GPS",  NULL);
+    list_btn = lv_list_add(list, LV_SYMBOL_GPS,  "GPS",  NULL);
     // lv_obj_set_size(list, LV_HOR_RES / 4, LV_VER_RES / 2);
     // lv_btn_set_toggle(list_btn, true);
-    lv_list_add(list, SYMBOL_WIFI, "WiFi", NULL);
-    lv_list_add(list, SYMBOL_GPS, "GPS", NULL);
-    lv_list_add(list, SYMBOL_AUDIO, "Audio", NULL);
-    lv_list_add(list, SYMBOL_VIDEO, "Video", NULL);
-    lv_list_add(list, SYMBOL_CALL, "Call", NULL);
-    lv_list_add(list, SYMBOL_BELL, "Bell", NULL);
-    lv_list_add(list, SYMBOL_FILE, "File", NULL);
-    lv_list_add(list, SYMBOL_EDIT, "Edit", NULL);
-    lv_list_add(list, SYMBOL_CUT,  "Cut",  NULL);
-    lv_list_add(list, SYMBOL_COPY, "Copy", NULL);
+    lv_list_add(list, LV_SYMBOL_WIFI, "WiFi", NULL);
+    lv_list_add(list, LV_SYMBOL_GPS, "GPS", NULL);
+    lv_list_add(list, LV_SYMBOL_AUDIO, "Audio", NULL);
+    lv_list_add(list, LV_SYMBOL_VIDEO, "Video", NULL);
+    lv_list_add(list, LV_SYMBOL_CALL, "Call", NULL);
+    lv_list_add(list, LV_SYMBOL_BELL, "Bell", NULL);
+    lv_list_add(list, LV_SYMBOL_FILE, "File", NULL);
+    lv_list_add(list, LV_SYMBOL_EDIT, "Edit", NULL);
+    lv_list_add(list, LV_SYMBOL_CUT,  "Cut",  NULL);
+    lv_list_add(list, LV_SYMBOL_COPY, "Copy", NULL);
 
     lv_cont_set_layout(h, LV_LAYOUT_CENTER);
     lv_obj_set_pos(h, LV_HOR_RES - (LV_HOR_RES / 4) * 1, lv_obj_get_height(header));
@@ -118,7 +118,7 @@ static void body_create(void)
     lv_style_copy(&style_txt, &lv_style_plain);
     LV_FONT_DECLARE(seg_font);
     style_txt.text.font = &seg_font;
-    style_txt.text.opa = LV_OPA_100;
+    // style_txt.text.opa = LV_OPA_100;
 
     lv_obj_t *txt;
     txt = lv_label_create(body, NULL);
@@ -147,8 +147,8 @@ void gui_init(lv_theme_t * th)
     lv_theme_set_current(th);
     th = lv_theme_get_current();    /*If `LV_THEME_LIVE_UPDATE  1` `th` is not used directly so get the real theme after set*/
     lv_obj_t * scr = lv_cont_create(NULL, NULL);
-    lv_scr_load(scr);
-    lv_cont_set_style(scr, th->bg);
+    lv_disp_set_scr_act(scr);
+    lv_cont_set_style(scr, LV_CONT_STYLE_MAIN, th->style.bg);
 
     header_create();
     side_create();
