@@ -15,6 +15,7 @@
 #include "lwip/dns.h"
 #include "lwip/netdb.h"
 #include "lwip/apps/sntp.h"
+#include "esp_heap_caps.h"
 #include "driver/touch_pad.h"
 #include "esp_log.h"
 #include "button.h"
@@ -210,7 +211,7 @@ static void gui_tick_task(void * arg)
     }
 }
 
-static lv_color_t lv_buf[LV_HOR_RES_MAX * LV_VER_RES_MAX / 10];
+static lv_color_t *lv_buf = NULL;
 
 void gui_task(void *arg)
 {
@@ -221,7 +222,8 @@ void gui_task(void *arg)
     lv_init();
     /*Create a display buffer*/
     static lv_disp_buf_t disp_buf;
-    
+    lv_buf = (lv_color_t *)heap_caps_malloc(LV_HOR_RES_MAX * LV_VER_RES_MAX / 10, MALLOC_CAP_DMA);
+    // lv_buf = (lv_color_t *)heap_caps_malloc(sizeof(uint16_t) * LV_HOR_RES_MAX * LV_VER_RES_MAX, MALLOC_CAP_SPIRAM);
     lv_disp_buf_init(&disp_buf, lv_buf, NULL, LV_HOR_RES_MAX * LV_VER_RES_MAX / 10);
 
     /*Create a display*/
@@ -301,6 +303,7 @@ extern "C" void app_main() {
     button_init(button_press);
     // Initialize I2C on port 0 using I2Cbus interface
     i2c0.begin(SDA, SCL, CLOCK_SPEED);
+    i2c0.setTimeout(3000);
     hts221 = iot_hts221_create();
     bh1750 = iot_bh1750_create(I2C_NUM_0, BH1750_I2C_ADDRESS_DEFAULT);
     iot_bh1750_power_on(bh1750);
@@ -392,6 +395,9 @@ static void printTask(void*)
     float last_temperature = 0, last_humidity = 0;
     uint8_t epaper_data[64];
 
+    time_t now;
+    struct tm timeinfo, last_timeinfo;
+
     vTaskDelay(2000 / portTICK_PERIOD_MS);
     while (true) {
         printf("Pitch: %+6.1f \t Roll: %+6.1f \t Yaw: %+6.1f \n", pitch, roll, yaw);
@@ -410,8 +416,20 @@ static void printTask(void*)
         //     // lv_label_set_text(hum_label, (const char *)epaper_data);
         //     last_humidity = humidity;
         // }
+        time(&now);
+        localtime_r(&now, &timeinfo);
+        if (timeinfo.tm_year < (2016 - 1900)) {
+            // ESP_LOGE(TAG, "The current date/time error");
+        } else {
+            if (timeinfo.tm_sec != last_timeinfo.tm_sec) {
+                gui_set_time_change(1000);
+            }
+        }
+        last_timeinfo = timeinfo;
         printf("temperature: %f\n humidity: %f\r\n", (float)(temperature/10), (float)(humidity/10));
         printf("light: %f\n", light);
+        gui_set_sensor((float)(temperature/10), (float)(humidity/10), light, 1000);
+        gui_set_motion(pitch, roll, yaw, 1000);
         vTaskDelay(1000 / portTICK_PERIOD_MS);
     }
 }

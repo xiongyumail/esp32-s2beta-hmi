@@ -59,8 +59,8 @@ static void touchsensor_interrupt_cb(void * arg)
     int task_awoken = pdFALSE;
     touch_event_t evt;
 
-    evt.intr_mask = touch_pad_get_int_status();
-    evt.pad_status = touch_pad_get_status();
+    evt.intr_mask = touch_pad_intr_status_get_mask();
+    evt.pad_status = touch_pad_get_status_mask();
     evt.pad_num = touch_pad_get_scan_curr();
 
     if(evt.intr_mask & TOUCH_PAD_INTR_MASK_DONE) {
@@ -98,7 +98,7 @@ static void touchsensor_filter_set(touch_filter_mode_t mode)
             .jitter_step = 4,       // use for jitter mode.
     };
     touch_pad_filter_set_config(filter_info);
-    touch_pad_filter_start();
+    touch_pad_filter_enable();
     touch_pad_filter_baseline_reset(TOUCH_PAD_MAX);
     ESP_LOGI(TAG, "touch pad filter init %d", mode);
 }

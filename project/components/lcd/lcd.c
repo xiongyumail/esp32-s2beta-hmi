@@ -29,6 +29,9 @@ lcd_pin_def_t lcd_bus = {
 
 static lldesc_t __dma[250] = {0};
 
+// static uint16_t *lcd_buffer = NULL;
+// #define LCD_BUFFER_SIZE (8 * 1024)
+
 static void i2s_lcd_config(void)
 {
     DPORT_CLEAR_PERI_REG_MASK(DPORT_PERIP_CLK_EN_REG, DPORT_I2S0_CLK_EN);
@@ -187,12 +190,14 @@ static void lcd_write_cmd_byte(uint16_t cmd)
 void IRAM_ATTR lcd_write_data(uint16_t *data, size_t len)
 {
     // int x = 0;
-    // for (x = 0; x < len / 4000; x++) {
-    //     i2s_lcd_dma_write(data, 4000);
-    //     data += 2000;
+    // for (x = 0; x < len / LCD_BUFFER_SIZE; x++) {
+    //     memcpy(lcd_buffer, data, LCD_BUFFER_SIZE);
+    //     i2s_lcd_dma_write(lcd_buffer, LCD_BUFFER_SIZE);
+    //     data += LCD_BUFFER_SIZE / 2;
     // }
-    // if (len % 4000) {
-    //     i2s_lcd_dma_write(data, len % 4000);
+    // if (len % LCD_BUFFER_SIZE) {
+    //     memcpy(lcd_buffer, data, len % LCD_BUFFER_SIZE);
+    //     i2s_lcd_dma_write(lcd_buffer, len % LCD_BUFFER_SIZE);
     // }
     i2s_lcd_dma_write((uint8_t *)data, len);
 }
@@ -604,6 +609,7 @@ static void nt35510_init(void)
 
 void lcd_init(void)
 {
+    // lcd_buffer = (uint16_t *)heap_caps_malloc(LCD_BUFFER_SIZE, MALLOC_CAP_DMA);
     i2s_lcd_interface_init();
     nt35510_init();
 }
