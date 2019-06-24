@@ -172,81 +172,28 @@ static void body_page_motion(lv_obj_t * parent)
 
 static void body_page_led(lv_obj_t * parent)
 {
-    /*Create a Window*/
-    lv_obj_t * win = lv_win_create(parent, NULL);
-    lv_win_add_btn(win, LV_SYMBOL_CLOSE, lv_win_close_event);
-    lv_win_add_btn(win, LV_SYMBOL_DOWN, NULL);
-    lv_obj_set_size(win, lv_disp_get_hor_res(NULL) / 2, lv_disp_get_ver_res(NULL) / 2);
-    lv_obj_set_pos(win, LV_DPI / 20, LV_DPI / 20);
-    lv_obj_set_top(win, true);
+    static lv_color_t *canvas_buffer = NULL;
+    if (canvas_buffer == NULL) {
+        canvas_buffer = (lv_color_t *)heap_caps_malloc(LV_CANVAS_BUF_SIZE_TRUE_COLOR(300, 300), MALLOC_CAP_SPIRAM);
+    }
 
-
-    /*Create a Label in the Window*/
-    lv_obj_t * label = lv_label_create(win, NULL);
-    lv_label_set_text(label, "Label in the window");
-
-    /*Create a  Line meter in the Window*/
-    lv_obj_t * lmeter = lv_lmeter_create(win, NULL);
-    lv_obj_align(lmeter, label, LV_ALIGN_OUT_BOTTOM_LEFT, 0, LV_DPI / 2);
-    lv_lmeter_set_value(lmeter, 70);
-
-    /*Create a 2 LEDs in the Window*/
-    lv_obj_t * led1 = lv_led_create(win, NULL);
-    lv_obj_align(led1, lmeter, LV_ALIGN_OUT_RIGHT_MID, LV_DPI / 2, 0);
-    lv_led_on(led1);
-
-    lv_obj_t * led2 = lv_led_create(win, NULL);
-    lv_obj_align(led2, led1, LV_ALIGN_OUT_RIGHT_MID, LV_DPI / 2, 0);
-    lv_led_off(led2);
-
-    /*Create a Page*/
-    lv_obj_t * page = lv_page_create(parent, NULL);
-    lv_obj_set_size(page, lv_disp_get_hor_res(NULL) / 3, lv_disp_get_ver_res(NULL) / 2);
-    lv_obj_set_top(page, true);
-    lv_obj_align(page, win, LV_ALIGN_IN_TOP_RIGHT,  LV_DPI, LV_DPI);
-
-    label = lv_label_create(page, NULL);
-    lv_label_set_text(label, "Lorem ipsum dolor sit amet, repudiare voluptatibus pri cu.\n"
-                      "Ei mundi pertinax posidonium eum, cum tempor maiorum at,\n"
-                      "mea fuisset assentior ad. Usu cu suas civibus iudicabit.\n"
-                      "Eum eu congue tempor facilisi. Tale hinc unum te vim.\n"
-                      "Te cum populo animal eruditi, labitur inciderint at nec.\n\n"
-                      "Eius corpora et quo. Everti voluptaria instructior est id,\n"
-                      "vel in falli primis. Mea ei porro essent admodum,\n"
-                      "his ei malis quodsi, te quis aeterno his.\n"
-                      "Qui tritani recusabo reprehendunt ne,\n"
-                      "per duis explicari at. Simul mediocritatem mei et.");
-
-    /*Create a Calendar*/
-    lv_obj_t * cal = lv_calendar_create(parent, NULL);
-    lv_obj_set_size(cal, 5 * LV_DPI / 2, 5 * LV_DPI / 2);
-    lv_obj_align(cal, page, LV_ALIGN_OUT_RIGHT_TOP, -LV_DPI / 2, LV_DPI / 3);
-    lv_obj_set_top(cal, true);
-
-    static lv_calendar_date_t highlighted_days[2];
-    highlighted_days[0].day = 5;
-    highlighted_days[0].month = 5;
-    highlighted_days[0].year = 2018;
-
-    highlighted_days[1].day = 8;
-    highlighted_days[1].month = 5;
-    highlighted_days[1].year = 2018;
-
-    lv_calendar_set_highlighted_dates(cal, highlighted_days, 2);
-    lv_calendar_set_today_date(cal, &highlighted_days[0]);
-    lv_calendar_set_showed_date(cal, &highlighted_days[0]);
-
-    /*Create a Message box*/
-    static const char * mbox_btn_map[] = {" ", "Got it!", " ", ""};
-    lv_obj_t * mbox = lv_mbox_create(parent, NULL);
-    lv_mbox_set_text(mbox, "Click on the window or the page to bring it to the foreground");
-    lv_mbox_add_btns(mbox, mbox_btn_map);
-    lv_btnm_set_btn_ctrl(lv_mbox_get_btnm(mbox), 0, LV_BTNM_CTRL_HIDDEN);
-    lv_btnm_set_btn_width(lv_mbox_get_btnm(mbox), 1, 7);
-    lv_btnm_set_btn_ctrl(lv_mbox_get_btnm(mbox), 2, LV_BTNM_CTRL_HIDDEN);
-    lv_obj_set_top(mbox, true);
-
-
+    lv_obj_t * h = lv_cont_create(parent, NULL);
+    // lv_obj_set_click(h, false);
+    lv_cont_set_fit(h, LV_FIT_TIGHT);
+    lv_cont_set_layout(h, LV_LAYOUT_COL_L);
+    
+    static lv_style_t style;
+    lv_style_copy(&style, &lv_style_plain);
+    style.text.color = LV_COLOR_RED;
+    lv_obj_t * canvas = lv_canvas_create(h, NULL);
+    lv_canvas_set_buffer(canvas, canvas_buffer, 300, 300, LV_IMG_CF_TRUE_COLOR);
+    lv_canvas_fill_bg(canvas, LV_COLOR_CYAN);
+    // lv_color_hsv_to_rgb();
+    // static lv_color_t color_buf[10 * 10];
+    // for (int x = 0; x < 10* 10; x++) {s
+    //     color_buf[x] = LV_COLOR_CYAN;
+    // }
+    // lv_canvas_copy_buf(canvas, color_buf, 0, 0, 10, 10);
 }
 
 static void body_page_camera(lv_obj_t * parent)
