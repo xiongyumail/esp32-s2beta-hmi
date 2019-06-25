@@ -48,9 +48,9 @@ static lv_obj_t * light;
 static lv_obj_t * motion;
 
 typedef enum {
-    GUI_PAGE_MONITOR = 0,
+    GUI_PAGE_LED = 0,
+    GUI_PAGE_MONITOR,
     GUI_PAGE_MOTION,
-    GUI_PAGE_LED,
     GUI_PAGE_TOUCH,
     GUI_PAGE_AUDIO,
     GUI_PAGE_CAMERA,
@@ -58,7 +58,7 @@ typedef enum {
     GUI_PAGE_INFO
 } gui_page_t;
 
-static gui_page_t gui_page = GUI_PAGE_MONITOR;
+static gui_page_t gui_page = GUI_PAGE_LED;
 
 static gui_sensor_t gui_sensor;
 
@@ -282,6 +282,16 @@ static void color_picker_event_cb(lv_obj_t * obj, lv_event_t event)
     }
 }
 
+static void led_event_cb(lv_obj_t * obj, lv_event_t event)
+{
+    switch(event) {
+        case LV_EVENT_PRESSED:
+            lv_led_toggle(obj);
+            printf("led state: %s\n", (lv_led_get_bright(obj) == 255 ?  "on" : "off" ));
+        break;
+    }
+}
+
 static void body_page_led(lv_obj_t * parent)
 {
 
@@ -333,16 +343,19 @@ static void body_page_led(lv_obj_t * parent)
     lv_cont_set_layout(h2, LV_LAYOUT_COL_M);
 
     static lv_style_t led_style; 
-    lv_style_copy(&led_style, &lv_style_pretty_color);
+    lv_style_copy(&led_style, &lv_style_scr);
     led_style.body.radius = LV_RADIUS_CIRCLE;
     led_style.body.main_color = lv_color_hsv_to_rgb(color_picker_hsv.h, color_picker_hsv.s, color_picker_hsv.v);
-    led_style.body.border.width = 3;
+    led_style.body.border.width = 5;
     led_style.body.border.opa = LV_OPA_30;
-    led_style.body.shadow.width = 5;
+    led_style.body.shadow.width = 8;
 
     color_picker_led  = lv_led_create(h2, NULL);
     lv_obj_set_style(color_picker_led, &led_style);
+    lv_obj_set_click(color_picker_led, true);
+    lv_obj_set_event_cb(color_picker_led, led_event_cb);
     lv_obj_set_size(color_picker_led, LV_DPI, LV_DPI);
+    lv_led_on(color_picker_led);
 
     color_picker_table = lv_table_create(h2, NULL);
     lv_obj_align(color_picker_table, color_picker_led, LV_ALIGN_OUT_LEFT_TOP, 0, LV_DPI / 4);
@@ -536,6 +549,13 @@ static void side_btn_event_callback(lv_obj_t * obj, lv_event_t event)
                 lv_page_clean(body);
                 gui_page = (gui_page_t)obj->user_data;
                 switch ((int)gui_page) {
+                    case GUI_PAGE_LED: {
+                        lv_label_set_text(state, MY_LED_SYMBOL);
+                        lv_obj_set_style(state, &style_my_symbol);
+                        body_page_led(body);
+                    }
+                    break;
+
                     case GUI_PAGE_MONITOR: {
                         lv_label_set_text(state, MY_TEMP_SYMBOL);
                         lv_obj_set_style(state, &style_my_symbol);
@@ -547,13 +567,6 @@ static void side_btn_event_callback(lv_obj_t * obj, lv_event_t event)
                         lv_label_set_text(state, MY_MOTION_SYMBOL);
                         lv_obj_set_style(state, &style_my_symbol);
                         body_page_motion(body);
-                    }
-                    break;
-
-                    case GUI_PAGE_LED: {
-                        lv_label_set_text(state, MY_LED_SYMBOL);
-                        lv_obj_set_style(state, &style_my_symbol);
-                        body_page_led(body);
                     }
                     break;
 
@@ -609,6 +622,12 @@ static void side_create(void)
     lv_obj_t * label;
     lv_obj_t * list_btn;
 
+    list_btn = lv_list_add(list, MY_LED_SYMBOL, "LED", NULL);
+    list_btn->user_data = GUI_PAGE_LED;
+    lv_obj_set_event_cb(list_btn, side_btn_event_callback);
+    label = lv_list_get_btn_img(list_btn);
+    lv_obj_set_style(label, &style_my_symbol);
+
     list_btn = lv_list_add(list, MY_TEMP_SYMBOL, "Monitor", NULL);
     list_btn->user_data = GUI_PAGE_MONITOR;
     lv_obj_set_event_cb(list_btn, side_btn_event_callback);
@@ -617,12 +636,6 @@ static void side_create(void)
 
     list_btn = lv_list_add(list, MY_MOTION_SYMBOL, "Motion", NULL);
     list_btn->user_data = GUI_PAGE_MOTION;
-    lv_obj_set_event_cb(list_btn, side_btn_event_callback);
-    label = lv_list_get_btn_img(list_btn);
-    lv_obj_set_style(label, &style_my_symbol);
-
-    list_btn = lv_list_add(list, MY_LED_SYMBOL, "LED", NULL);
-    list_btn->user_data = GUI_PAGE_LED;
     lv_obj_set_event_cb(list_btn, side_btn_event_callback);
     label = lv_list_get_btn_img(list_btn);
     lv_obj_set_style(label, &style_my_symbol);
@@ -686,7 +699,7 @@ static void body_create(void)
     lv_page_set_scrl_layout(body, LV_LAYOUT_ROW_M);
 
     lv_obj_set_pos(body, 0, lv_obj_get_height(header));
-    body_page_monitor(body);
+    body_page_led(body);
 }
 
 static void gui_task(lv_task_t * arg)
