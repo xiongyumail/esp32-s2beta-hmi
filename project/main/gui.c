@@ -5,6 +5,7 @@
 #include "freertos/queue.h"
 #include "esp_heap_caps.h"
 #include "gui.h"
+#include "WS2812B.h"
 
 typedef struct {
     int event;
@@ -176,6 +177,8 @@ static lv_obj_t * color_picker_led;
 static lv_obj_t * color_picker_table;
 static lv_color_t *color_picker_buffer = NULL;
 static lv_color_hsv_t color_picker_hsv = {360, 100, 100};
+static wsRGB_t led_rgb;
+static bool led_state = 1;
 
 #define COLOR_PICKER_W 300
 #define COLOR_PICKER_H 300
@@ -206,11 +209,11 @@ static void color_picker_table_update(lv_color_hsv_t hsv)
 
     lv_color_t rgb;
     rgb = lv_color_hsv_to_rgb(hsv.h, hsv.s, hsv.v);
-    sprintf(str, "%d", rgb.ch.red);
+    sprintf(str, "%d", rgb.ch.red << 3);
     lv_table_set_cell_value(color_picker_table, 0, 1, str);
-    sprintf(str, "%d", rgb.ch.green);
+    sprintf(str, "%d", rgb.ch.green << 2);
     lv_table_set_cell_value(color_picker_table, 1, 1, str);
-    sprintf(str, "%d", rgb.ch.blue);
+    sprintf(str, "%d", rgb.ch.blue << 3);
     lv_table_set_cell_value(color_picker_table, 2, 1, str);
 
     sprintf(str, "%d", hsv.h);
@@ -219,7 +222,7 @@ static void color_picker_table_update(lv_color_hsv_t hsv)
     lv_table_set_cell_value(color_picker_table, 1, 3, str);
     sprintf(str, "%d", hsv.v);
     lv_table_set_cell_value(color_picker_table, 2, 3, str);
-    sprintf(str, "#%06x", rgb.ch.red << 16 | rgb.ch.green << 8 | rgb.ch.blue);
+    sprintf(str, "#%06x", rgb.ch.red << 19 | rgb.ch.green << 10 | rgb.ch.blue << 3);
     lv_table_set_cell_value(color_picker_table, 3, 0, str);
 }
 
@@ -278,15 +281,32 @@ static void color_picker_event_cb(lv_obj_t * obj, lv_event_t event)
             led_style->body.main_color = lv_color_hsv_to_rgb(color_picker_hsv.h, color_picker_hsv.s, color_picker_hsv.v);
             lv_obj_refresh_style(color_picker_led);
             color_picker_table_update(color_picker_hsv);
+            led_rgb.r = led_style->body.main_color.ch.red << 3;
+            led_rgb.g = led_style->body.main_color.ch.green << 2;
+            led_rgb.b = led_style->body.main_color.ch.blue << 3;
+            if (led_state) {
+                WS2812B_setLeds(&led_rgb, 1);
+            }
+
             break;
     }
 }
 
 static void led_event_cb(lv_obj_t * obj, lv_event_t event)
 {
+    wsRGB_t rgb;
     switch(event) {
         case LV_EVENT_PRESSED:
             lv_led_toggle(obj);
+            led_state = lv_led_get_bright(obj) == 255 ? 1 : 0;
+            if (led_state == 0) {
+                rgb.r = 0;
+                rgb.g = 0;
+                rgb.b = 0;
+                WS2812B_setLeds(&rgb, 1);
+            } else {
+                WS2812B_setLeds(&led_rgb, 1);
+            }
             printf("led state: %s\n", (lv_led_get_bright(obj) == 255 ?  "on" : "off" ));
         break;
     }
@@ -355,7 +375,16 @@ static void body_page_led(lv_obj_t * parent)
     lv_obj_set_click(color_picker_led, true);
     lv_obj_set_event_cb(color_picker_led, led_event_cb);
     lv_obj_set_size(color_picker_led, LV_DPI, LV_DPI);
-    lv_led_on(color_picker_led);
+    
+    led_rgb.r = led_style.body.main_color.ch.red << 3;
+    led_rgb.g = led_style.body.main_color.ch.green << 2;
+    led_rgb.b = led_style.body.main_color.ch.blue << 3;
+    if (led_state) {
+        lv_led_on(color_picker_led);
+        WS2812B_setLeds(&led_rgb, 1);
+    } else {
+        lv_led_off(color_picker_led);
+    }
 
     color_picker_table = lv_table_create(h2, NULL);
     lv_obj_align(color_picker_table, color_picker_led, LV_ALIGN_OUT_LEFT_TOP, 0, LV_DPI / 4);

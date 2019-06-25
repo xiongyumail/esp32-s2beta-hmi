@@ -309,10 +309,11 @@ extern "C" void app_main() {
     iot_bh1750_power_on(bh1750);
     iot_bh1750_set_measure_mode(bh1750, BH1750_CONTINUE_4LX_RES);
     WS2812B_init(RMT_CHANNEL_0, GPIO_NUM_4, 1);
-    wsRGB_t rgb = {0xff, 0xff, 0xff};
+    wsRGB_t rgb = {0x0, 0x0, 0x0};
     WS2812B_setLeds(&rgb, 1);
+    // neopixel_init();
 
-    touch_init();
+    // touch_init();
 
     // Create a task to setup mpu and read sensor data
     xTaskCreate(mpuTask, "mpuTask", 4 * 1024, nullptr, 6, nullptr);
