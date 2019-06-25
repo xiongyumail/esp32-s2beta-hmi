@@ -146,7 +146,8 @@ static void body_page_monitor(lv_obj_t * parent)
     lv_calendar_set_showed_date(cal, &today);
 
     lv_obj_t * h = lv_cont_create(parent, NULL);
-    // lv_obj_set_click(h, false);
+    lv_obj_set_click(h, false);
+    lv_obj_set_drag(h, true);
     lv_cont_set_fit(h, LV_FIT_TIGHT);
     lv_cont_set_layout(h, LV_LAYOUT_COL_L);
 
@@ -170,30 +171,200 @@ static void body_page_motion(lv_obj_t * parent)
     sensor_update(&gui_sensor);
 }
 
+static lv_obj_t * color_picker;
+static lv_obj_t * color_picker_led;
+static lv_obj_t * color_picker_table;
+static lv_color_t *color_picker_buffer = NULL;
+static lv_color_hsv_t color_picker_hsv = {360, 100, 100};
+
+#define COLOR_PICKER_W 300
+#define COLOR_PICKER_H 300
+#define COLOR_PICKER_HUE_W 28
+#define COLOR_PICKER_HUE_H 300
+
+static void color_picker_copy(lv_color_t *buffer, uint16_t hsv_h)
+{
+    for (int y=0; y < COLOR_PICKER_H; y++) {
+        for (int x = 0; x < COLOR_PICKER_W; x++) {
+            buffer[y*COLOR_PICKER_W + x] = lv_color_hsv_to_rgb(hsv_h, (uint8_t)(x * (100.0 / COLOR_PICKER_W)), (uint8_t)(100 - y * (100.0 / COLOR_PICKER_H)));
+        }
+    }
+}
+
+static void color_picker_hue_copy(lv_color_t *buffer)
+{
+    for (int y=0; y < COLOR_PICKER_HUE_H; y++) {
+        for (int x = 0; x < COLOR_PICKER_HUE_W; x++) {
+            buffer[y*COLOR_PICKER_HUE_W + x] = lv_color_hsv_to_rgb((uint16_t)(360 - y * (360.0 / COLOR_PICKER_HUE_H)), 100, 100);
+        }
+    }
+}
+
+static void color_picker_table_update(lv_color_hsv_t hsv)
+{
+    char str[16];
+
+    lv_color_t rgb;
+    rgb = lv_color_hsv_to_rgb(hsv.h, hsv.s, hsv.v);
+    sprintf(str, "%d", rgb.ch.red);
+    lv_table_set_cell_value(color_picker_table, 0, 1, str);
+    sprintf(str, "%d", rgb.ch.green);
+    lv_table_set_cell_value(color_picker_table, 1, 1, str);
+    sprintf(str, "%d", rgb.ch.blue);
+    lv_table_set_cell_value(color_picker_table, 2, 1, str);
+
+    sprintf(str, "%d", hsv.h);
+    lv_table_set_cell_value(color_picker_table, 0, 3, str);
+    sprintf(str, "%d", hsv.s);
+    lv_table_set_cell_value(color_picker_table, 1, 3, str);
+    sprintf(str, "%d", hsv.v);
+    lv_table_set_cell_value(color_picker_table, 2, 3, str);
+    sprintf(str, "#%06x", rgb.ch.red << 16 | rgb.ch.green << 8 | rgb.ch.blue);
+    lv_table_set_cell_value(color_picker_table, 3, 0, str);
+}
+
+static void color_picker_event_cb(lv_obj_t * obj, lv_event_t event)
+{
+    lv_area_t a;
+    lv_point_t p;
+    lv_obj_get_coords(obj, &a);
+    lv_indev_get_point(lv_indev_get_act(), &p);
+    lv_obj_t *child = lv_obj_get_child(obj, NULL);
+    switch(event) {
+        case LV_EVENT_PRESSED:
+        case LV_EVENT_PRESSING:
+            if (obj != color_picker) {
+                lv_obj_set_y(child, p.y - a.y1 - lv_obj_get_height(child) / 2);
+            } else {
+                lv_obj_set_pos(child, p.x - a.x1 - lv_obj_get_width(child) / 2, p.y - a.y1 - lv_obj_get_height(child) / 2);
+            }
+            break;
+        case LV_EVENT_RELEASED:
+            if (obj != color_picker) {
+                if ((p.y - a.y1) >= 0 && (p.y - a.y1) <= COLOR_PICKER_HUE_H) {
+                    color_picker_hsv.h = (uint16_t)(360 - (p.y - a.y1) * (360.0 / COLOR_PICKER_HUE_H));
+                } else {
+                    if (p.y - a.y1 < 0) {
+                        color_picker_hsv.h = 360;
+                    } else {
+                        color_picker_hsv.h = 0;
+                    }
+                }
+                color_picker_copy(color_picker_buffer, color_picker_hsv.h);
+                lv_obj_refresh_ext_draw_pad(color_picker);
+                lv_obj_set_y(child, (COLOR_PICKER_HUE_H - color_picker_hsv.h * (COLOR_PICKER_HUE_H / 360.0)) - lv_obj_get_height(child) / 2);
+            } else {
+                if ((p.x - a.x1) >= 0 && (p.x - a.x1) <= COLOR_PICKER_W) {
+                    color_picker_hsv.s = (uint8_t)((p.x - a.x1) * (100.0 / COLOR_PICKER_W));
+                } else {
+                    if (p.x - a.x1 < 0) {
+                        color_picker_hsv.s = 0;
+                    } else {
+                        color_picker_hsv.s = 100;
+                    }
+                }
+                if ((p.y - a.y1) >= 0 && (p.y - a.y1) <= COLOR_PICKER_H) {
+                    color_picker_hsv.v = (uint8_t)(100 - (p.y - a.y1) * (100.0 / COLOR_PICKER_H));
+                } else {
+                    if (p.y - a.y1 < 0) {
+                        color_picker_hsv.v = 100;
+                    } else {
+                        color_picker_hsv.v = 0;
+                    }
+                }
+                lv_obj_set_pos(child, (color_picker_hsv.s * (COLOR_PICKER_W / 100.0)) - lv_obj_get_width(child) / 2, (COLOR_PICKER_H - color_picker_hsv.v * (COLOR_PICKER_H / 100.0)) - lv_obj_get_height(child) / 2);
+            }
+            lv_style_t *led_style = lv_obj_get_style(color_picker_led);
+            led_style->body.main_color = lv_color_hsv_to_rgb(color_picker_hsv.h, color_picker_hsv.s, color_picker_hsv.v);
+            lv_obj_refresh_style(color_picker_led);
+            color_picker_table_update(color_picker_hsv);
+            break;
+    }
+}
+
 static void body_page_led(lv_obj_t * parent)
 {
-    static lv_color_t *canvas_buffer = NULL;
-    if (canvas_buffer == NULL) {
-        canvas_buffer = (lv_color_t *)heap_caps_malloc(LV_CANVAS_BUF_SIZE_TRUE_COLOR(300, 300), MALLOC_CAP_SPIRAM);
+
+    lv_obj_t * h1 = lv_cont_create(parent, NULL);
+    lv_cont_set_fit(h1, LV_FIT_TIGHT);
+    lv_cont_set_layout(h1, LV_LAYOUT_ROW_M);
+
+    static lv_style_t style_thumb;
+    lv_style_copy(&style_thumb, &lv_style_pretty);
+    style_thumb.body.radius = LV_RADIUS_CIRCLE;
+    style_thumb.body.opa = LV_OPA_50;
+    style_thumb.body.padding.left = 10 ;
+
+    if (color_picker_buffer == NULL) {
+        color_picker_buffer = (lv_color_t *)heap_caps_malloc(LV_CANVAS_BUF_SIZE_TRUE_COLOR(COLOR_PICKER_W, COLOR_PICKER_H), MALLOC_CAP_SPIRAM);
     }
 
-    lv_obj_t * h = lv_cont_create(parent, NULL);
-    // lv_obj_set_click(h, false);
-    lv_cont_set_fit(h, LV_FIT_TIGHT);
-    lv_cont_set_layout(h, LV_LAYOUT_COL_L);
+    color_picker = lv_canvas_create(h1, NULL);
+    lv_canvas_set_buffer(color_picker, color_picker_buffer, COLOR_PICKER_W, COLOR_PICKER_H, LV_IMG_CF_TRUE_COLOR);
+    lv_obj_set_click(color_picker, true);
+    lv_obj_set_protect(color_picker, LV_PROTECT_PRESS_LOST);
+    lv_obj_set_event_cb(color_picker, color_picker_event_cb);
+    color_picker_copy(color_picker_buffer, color_picker_hsv.h);
+
+    lv_obj_t * color_picker_thumb = lv_obj_create(color_picker, NULL);
+    lv_obj_set_size(color_picker_thumb, COLOR_PICKER_HUE_W, COLOR_PICKER_HUE_W);
+    lv_obj_set_style(color_picker_thumb, &style_thumb);
+    lv_obj_set_pos(color_picker_thumb, (color_picker_hsv.s * (COLOR_PICKER_W / 100.0)) - lv_obj_get_width(color_picker_thumb) / 2, (COLOR_PICKER_H - color_picker_hsv.v * (COLOR_PICKER_H / 100.0)) - lv_obj_get_height(color_picker_thumb) / 2);
+
+    static lv_color_t *color_picker_hue_buffer = NULL;
+    if (color_picker_hue_buffer == NULL) {
+        color_picker_hue_buffer = (lv_color_t *)heap_caps_malloc(LV_CANVAS_BUF_SIZE_TRUE_COLOR(COLOR_PICKER_HUE_W, COLOR_PICKER_HUE_H), MALLOC_CAP_SPIRAM);
+    }
+
+    lv_obj_t * color_picker_hue = lv_canvas_create(h1, NULL);
+    lv_canvas_set_buffer(color_picker_hue, color_picker_hue_buffer, COLOR_PICKER_HUE_W, COLOR_PICKER_HUE_H, LV_IMG_CF_TRUE_COLOR);
+    lv_obj_set_click(color_picker_hue, true);
+    lv_obj_set_protect(color_picker_hue, LV_PROTECT_PRESS_LOST);
+    lv_obj_set_event_cb(color_picker_hue, color_picker_event_cb);
+    color_picker_hue_copy(color_picker_hue_buffer);
     
-    static lv_style_t style;
-    lv_style_copy(&style, &lv_style_plain);
-    style.text.color = LV_COLOR_RED;
-    lv_obj_t * canvas = lv_canvas_create(h, NULL);
-    lv_canvas_set_buffer(canvas, canvas_buffer, 300, 300, LV_IMG_CF_TRUE_COLOR);
-    lv_canvas_fill_bg(canvas, LV_COLOR_CYAN);
-    // lv_color_hsv_to_rgb();
-    // static lv_color_t color_buf[10 * 10];
-    // for (int x = 0; x < 10* 10; x++) {s
-    //     color_buf[x] = LV_COLOR_CYAN;
-    // }
-    // lv_canvas_copy_buf(canvas, color_buf, 0, 0, 10, 10);
+    lv_obj_t * color_picker_hue_thumb = lv_obj_create(color_picker_hue, NULL);
+    lv_obj_set_size(color_picker_hue_thumb, COLOR_PICKER_HUE_W, COLOR_PICKER_HUE_W);
+    lv_obj_set_style(color_picker_hue_thumb, &style_thumb);
+    lv_obj_set_y(color_picker_hue_thumb, (COLOR_PICKER_HUE_H - color_picker_hsv.h * (COLOR_PICKER_HUE_H / 360.0)) - lv_obj_get_height(color_picker_hue_thumb) / 2);
+
+    lv_obj_t * h2 = lv_cont_create(h1, NULL);
+    lv_cont_set_fit(h2, LV_FIT_TIGHT);
+    lv_cont_set_layout(h2, LV_LAYOUT_COL_M);
+
+    static lv_style_t led_style; 
+    lv_style_copy(&led_style, &lv_style_pretty_color);
+    led_style.body.radius = LV_RADIUS_CIRCLE;
+    led_style.body.main_color = lv_color_hsv_to_rgb(color_picker_hsv.h, color_picker_hsv.s, color_picker_hsv.v);
+    led_style.body.border.width = 3;
+    led_style.body.border.opa = LV_OPA_30;
+    led_style.body.shadow.width = 5;
+
+    color_picker_led  = lv_led_create(h2, NULL);
+    lv_obj_set_style(color_picker_led, &led_style);
+    lv_obj_set_size(color_picker_led, LV_DPI, LV_DPI);
+
+    color_picker_table = lv_table_create(h2, NULL);
+    lv_obj_align(color_picker_table, color_picker_led, LV_ALIGN_OUT_LEFT_TOP, 0, LV_DPI / 4);
+
+    lv_table_set_col_cnt(color_picker_table, 4);
+    lv_table_set_row_cnt(color_picker_table, 4);
+    lv_table_set_col_width(color_picker_table, 0, LV_DPI / 3);
+    lv_table_set_col_width(color_picker_table, 1, LV_DPI / 2);
+    lv_table_set_col_width(color_picker_table, 2, LV_DPI / 3);
+    lv_table_set_col_width(color_picker_table, 3, LV_DPI / 2);
+    lv_table_set_cell_merge_right(color_picker_table, 3, 0, true);
+    lv_table_set_cell_merge_right(color_picker_table, 3, 1, true);
+    lv_table_set_cell_merge_right(color_picker_table, 3, 2, true);
+
+    lv_table_set_cell_value(color_picker_table, 0, 0, "R:");
+    lv_table_set_cell_value(color_picker_table, 1, 0, "G:");
+    lv_table_set_cell_value(color_picker_table, 2, 0, "B:");
+
+    lv_table_set_cell_value(color_picker_table, 0, 2, "H:");
+    lv_table_set_cell_value(color_picker_table, 1, 2, "S:");
+    lv_table_set_cell_value(color_picker_table, 2, 2, "V:");
+    color_picker_table_update(color_picker_hsv);
 }
 
 static void body_page_camera(lv_obj_t * parent)
