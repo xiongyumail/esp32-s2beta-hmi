@@ -56,11 +56,12 @@ static esp_err_t wifi_event_handler(void *ctx, system_event_t *event)
             break;
         case SYSTEM_EVENT_STA_GOT_IP:
             xEventGroupSetBits(wifi_event_group, CONNECTED_BIT);
-
+            gui_set_wifi_state(true, 0);
             break;
         case SYSTEM_EVENT_STA_DISCONNECTED:
             esp_wifi_connect();
             xEventGroupClearBits(wifi_event_group, CONNECTED_BIT);
+            gui_set_wifi_state(false, 0);
             break;
         default:
             break;
@@ -84,7 +85,7 @@ static void wifi_init(void)
     ESP_LOGI(TAG, "start the WIFI SSID:[%s]", CONFIG_WIFI_SSID);
     ESP_ERROR_CHECK(esp_wifi_start());
     ESP_LOGI(TAG, "Waiting for wifi");
-    // xEventGroupWaitBits(wifi_event_group, CONNECTED_BIT, false, true, portMAX_DELAY);
+    xEventGroupWaitBits(wifi_event_group, CONNECTED_BIT, false, true, portMAX_DELAY);
 }
 
 void show_task_mem()
@@ -222,9 +223,9 @@ void gui_task(void *arg)
     lv_init();
     /*Create a display buffer*/
     static lv_disp_buf_t disp_buf;
-    lv_buf = (lv_color_t *)heap_caps_malloc(LV_HOR_RES_MAX * LV_VER_RES_MAX / 10, MALLOC_CAP_DMA);
-    // lv_buf = (lv_color_t *)heap_caps_malloc(sizeof(uint16_t) * LV_HOR_RES_MAX * LV_VER_RES_MAX, MALLOC_CAP_SPIRAM);
-    lv_disp_buf_init(&disp_buf, lv_buf, NULL, LV_HOR_RES_MAX * LV_VER_RES_MAX / 10);
+    // lv_buf = (lv_color_t *)heap_caps_malloc(LV_HOR_RES_MAX * LV_VER_RES_MAX / 200, MALLOC_CAP_DMA);
+    lv_buf = (lv_color_t *)heap_caps_malloc(sizeof(uint16_t) * LV_HOR_RES_MAX * LV_VER_RES_MAX, MALLOC_CAP_SPIRAM);
+    lv_disp_buf_init(&disp_buf, lv_buf, NULL, LV_HOR_RES_MAX * LV_VER_RES_MAX);
 
     /*Create a display*/
     lv_disp_drv_t disp_drv;
@@ -249,8 +250,6 @@ void gui_task(void *arg)
     lv_task_create(memory_monitor, 3000, LV_TASK_PRIO_MID, NULL);
 
     gui_init(lv_theme_material_init(0, NULL));
-    // benchmark_create();
-    // lv_test_theme_1(lv_theme_material_init(0, NULL));
 
     while(1) {
         lv_task_handler();
@@ -294,10 +293,8 @@ extern "C" void app_main() {
     // sntp_setoperatingmode(SNTP_OPMODE_POLL);
     // sntp_setservername(0, "pool.ntp.org");
     // sntp_init();
-    // setenv("TZ", "CST-8", 1);
-    // tzset();
-
-    // wifi_init();
+    setenv("TZ", "CST-8", 1);
+    tzset();
 
     esp_read_mac(mac, ESP_MAC_WIFI_STA);
     button_init(button_press);
@@ -311,7 +308,6 @@ extern "C" void app_main() {
     WS2812B_init(RMT_CHANNEL_0, GPIO_NUM_4, 1);
     wsRGB_t rgb = {0x0, 0x0, 0x0};
     WS2812B_setLeds(&rgb, 1);
-    // neopixel_init();
 
     // touch_init();
 
@@ -321,6 +317,9 @@ extern "C" void app_main() {
     xTaskCreate(printTask, "printTask", 2 * 1024, nullptr, 5, nullptr);
 
     xTaskCreate(gui_task, "gui_task", 4096, NULL, 5, NULL);
+
+    vTaskDelay(1000 /portTICK_RATE_MS);
+    wifi_init();
 }
 
 /* Tasks */
@@ -419,13 +418,13 @@ static void printTask(void*)
         // }
         time(&now);
         localtime_r(&now, &timeinfo);
-        if (timeinfo.tm_year < (2016 - 1900)) {
-            // ESP_LOGE(TAG, "The current date/time error");
-        } else {
+        // if (timeinfo.tm_year < (2016 - 1900)) {
+        //     // ESP_LOGE(TAG, "The current date/time error");
+        // } else {
             if (timeinfo.tm_sec != last_timeinfo.tm_sec) {
                 gui_set_time_change(1000);
             }
-        }
+        // }
         last_timeinfo = timeinfo;
         printf("temperature: %f\n humidity: %f\r\n", (float)(temperature/10), (float)(humidity/10));
         printf("light: %f\n", light);
