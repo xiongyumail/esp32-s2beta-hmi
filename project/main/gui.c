@@ -651,47 +651,47 @@ static void side_create(void)
     lv_obj_t * label;
     lv_obj_t * list_btn;
 
-    list_btn = lv_list_add(list, MY_LED_SYMBOL, "LED", NULL);
+    list_btn = lv_list_add_btn(list, MY_LED_SYMBOL, "LED");
     list_btn->user_data = GUI_PAGE_LED;
     lv_obj_set_event_cb(list_btn, side_btn_event_callback);
     label = lv_list_get_btn_img(list_btn);
     lv_obj_set_style(label, &style_my_symbol);
 
-    list_btn = lv_list_add(list, MY_TEMP_SYMBOL, "Monitor", NULL);
+    list_btn = lv_list_add_btn(list, MY_TEMP_SYMBOL, "Monitor");
     list_btn->user_data = GUI_PAGE_MONITOR;
     lv_obj_set_event_cb(list_btn, side_btn_event_callback);
     label = lv_list_get_btn_img(list_btn);
     lv_obj_set_style(label, &style_my_symbol);
 
-    list_btn = lv_list_add(list, MY_MOTION_SYMBOL, "Motion", NULL);
+    list_btn = lv_list_add_btn(list, MY_MOTION_SYMBOL, "Motion");
     list_btn->user_data = GUI_PAGE_MOTION;
     lv_obj_set_event_cb(list_btn, side_btn_event_callback);
     label = lv_list_get_btn_img(list_btn);
     lv_obj_set_style(label, &style_my_symbol);
 
-    list_btn = lv_list_add(list, MY_TOUCH_SYMBOL, "Touch", NULL);
+    list_btn = lv_list_add_btn(list, MY_TOUCH_SYMBOL, "Touch");
     list_btn->user_data = GUI_PAGE_TOUCH;
     lv_obj_set_event_cb(list_btn, side_btn_event_callback);
     label = lv_list_get_btn_img(list_btn);
     lv_obj_set_style(label, &style_my_symbol);
 
-    list_btn = lv_list_add(list, LV_SYMBOL_AUDIO, "Audio", NULL);
+    list_btn = lv_list_add_btn(list, LV_SYMBOL_AUDIO, "Audio");
     list_btn->user_data = GUI_PAGE_AUDIO;
     lv_obj_set_event_cb(list_btn, side_btn_event_callback);
     // label = lv_list_get_btn_img(list_btn);
     // lv_obj_set_style(label, &style_symbol);
 
-    list_btn = lv_list_add(list, MY_CAMERA_SYMBOL, "Camera", NULL);
+    list_btn = lv_list_add_btn(list, MY_CAMERA_SYMBOL, "Camera");
     list_btn->user_data = GUI_PAGE_CAMERA;
     lv_obj_set_event_cb(list_btn, side_btn_event_callback);
     label = lv_list_get_btn_img(list_btn);
     lv_obj_set_style(label, &style_my_symbol);
 
-    list_btn = lv_list_add(list, LV_SYMBOL_KEYBOARD, "Terminal", NULL);
+    list_btn = lv_list_add_btn(list, LV_SYMBOL_KEYBOARD, "Terminal");
     list_btn->user_data = GUI_PAGE_TERMINAL;
     lv_obj_set_event_cb(list_btn, side_btn_event_callback);
 
-    list_btn = lv_list_add(list, MY_ESPRESSIF_SYMBOL, "Info", NULL);
+    list_btn = lv_list_add_btn(list, MY_ESPRESSIF_SYMBOL, "Info");
     list_btn->user_data = GUI_PAGE_INFO;
     lv_obj_set_event_cb(list_btn, side_btn_event_callback);
     label = lv_list_get_btn_img(list_btn);
@@ -856,7 +856,7 @@ void gui_init(lv_theme_t * th)
     lv_theme_set_current(th);
     th = lv_theme_get_current();    /*If `LV_THEME_LIVE_UPDATE  1` `th` is not used directly so get the real theme after set*/
     lv_obj_t * scr = lv_cont_create(NULL, NULL);
-    lv_disp_set_scr_act(scr);
+    lv_disp_load_scr(scr);
     lv_cont_set_style(scr, LV_CONT_STYLE_MAIN, th->style.bg);
     // lv_cont_set_style(scr, th->style.bg);
 

@@ -161,10 +161,6 @@ static void button_press(uint8_t num, button_press_event_t button_press_event)
 
 }
 
-#include "lv_examples/lv_apps/demo/demo.h"
-#include "lv_examples/lv_apps/benchmark/benchmark.h"
-#include "lv_examples/lv_tests/lv_test.h"
-
 static lv_disp_t  * disp;
 
 void IRAM_ATTR disp_flush(lv_disp_drv_t * disp_drv, const lv_area_t * area, lv_color_t * color_p)

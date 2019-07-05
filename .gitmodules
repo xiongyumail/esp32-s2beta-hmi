@@ -4,9 +4,6 @@
 [submodule "project/components/littlevgl/lvgl"]
 	path = project/components/littlevgl/lvgl
 	url = https://github.com/littlevgl/lvgl.git
-[submodule "project/components/littlevgl/lv_examples"]
-	path = project/components/littlevgl/lv_examples
-	url = https://github.com/littlevgl/lv_examples.git
 [submodule "project/components/I2Cbus"]
 	path = project/components/I2Cbus
 	url = https://github.com/natanaeljr/esp32-I2Cbus.git
