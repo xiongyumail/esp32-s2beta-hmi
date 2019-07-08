@@ -540,6 +540,102 @@ static void body_page_terminal(lv_obj_t * parent)
     lv_obj_set_event_cb(terminal_kb, keyboard_event_cb);
 }
 
+static void event_handler(lv_obj_t * obj, lv_event_t event)
+{
+    lv_obj_t *label;
+    if(event == LV_EVENT_CLICKED) {
+        label = lv_obj_get_child(obj, NULL);
+        printf("label: %s\n", lv_label_get_text(label));
+    }
+}
+                                  
+static void body_page_audio(lv_obj_t * parent)
+{
+    lv_obj_t * h1 = lv_cont_create(parent, NULL);
+    lv_cont_set_fit(h1, LV_FIT_TIGHT);
+
+    lv_obj_t * audio_btn[12];
+    lv_obj_t * label;
+
+    audio_btn[0] = lv_btn_create(h1, NULL);
+    lv_theme_t * th = lv_theme_get_current();
+    lv_btn_set_style(audio_btn[0], LV_BTN_STYLE_REL, th->style.btnm.btn.rel);
+    lv_btn_set_style(audio_btn[0], LV_BTN_STYLE_PR, th->style.btnm.btn.pr);
+    lv_btn_set_style(audio_btn[0], LV_BTN_STYLE_TGL_REL, th->style.btnm.btn.tgl_rel);
+    lv_btn_set_style(audio_btn[0], LV_BTN_STYLE_TGL_PR, th->style.btnm.btn.tgl_pr);
+    lv_btn_set_style(audio_btn[0], LV_BTN_STYLE_INA, th->style.btnm.btn.ina);
+
+    lv_obj_set_event_cb(audio_btn[0], event_handler);
+    lv_btn_set_layout(audio_btn[0], LV_LAYOUT_OFF);
+    lv_obj_set_size(audio_btn[0], 80, 300);
+    label = lv_label_create(audio_btn[0], NULL);
+    lv_label_set_text(label, "C");
+    lv_obj_align(label, NULL, LV_ALIGN_IN_BOTTOM_MID, 0, -10);
+
+    audio_btn[1] = lv_btn_create(h1, audio_btn[0]);
+    lv_obj_align(audio_btn[1], audio_btn[0], LV_ALIGN_OUT_RIGHT_TOP, 0, 0);
+    label = lv_label_create(audio_btn[1], label);
+    lv_label_set_text(label, "D");
+
+    audio_btn[2] = lv_btn_create(h1, audio_btn[0]);
+    lv_obj_align(audio_btn[2], audio_btn[1], LV_ALIGN_OUT_RIGHT_TOP, 0, 0);
+    label = lv_label_create(audio_btn[2], label);
+    lv_label_set_text(label, "E");
+
+    audio_btn[3] = lv_btn_create(h1, audio_btn[0]);
+    lv_obj_align(audio_btn[3], audio_btn[2], LV_ALIGN_OUT_RIGHT_TOP, 0, 0);
+    label = lv_label_create(audio_btn[3], label);
+    lv_label_set_text(label, "F");
+
+    audio_btn[4] = lv_btn_create(h1, audio_btn[0]);
+    lv_obj_align(audio_btn[4], audio_btn[3], LV_ALIGN_OUT_RIGHT_TOP, 0, 0);
+    label = lv_label_create(audio_btn[4], label);
+    lv_label_set_text(label, "G");
+
+    audio_btn[5] = lv_btn_create(h1, audio_btn[0]);
+    lv_obj_align(audio_btn[5], audio_btn[4], LV_ALIGN_OUT_RIGHT_TOP, 0, 0);
+    label = lv_label_create(audio_btn[5], label);
+    lv_label_set_text(label, "A");
+
+    audio_btn[6] = lv_btn_create(h1, audio_btn[0]);
+    lv_obj_align(audio_btn[6], audio_btn[5], LV_ALIGN_OUT_RIGHT_TOP, 0, 0);
+    label = lv_label_create(audio_btn[6], label);
+    lv_label_set_text(label, "B");
+
+    static lv_style_t style_rel;
+
+    audio_btn[7] = lv_btn_create(h1, audio_btn[0]);
+    lv_style_copy(&style_rel, th->style.btnm.bg);
+    style_rel.body.main_color = LV_COLOR_BLACK;
+    style_rel.body.grad_color = LV_COLOR_BLACK;
+    lv_btn_set_style(audio_btn[7], LV_BTN_STYLE_REL, &style_rel);
+    lv_obj_set_size(audio_btn[7], 60, 200);
+    lv_obj_align(audio_btn[7], audio_btn[0], LV_ALIGN_OUT_RIGHT_TOP, - 60 / 2, 0);
+    label = lv_label_create(audio_btn[7], NULL);
+    lv_label_set_text(label, "#C");
+    lv_obj_align(label, audio_btn[7], LV_ALIGN_IN_BOTTOM_MID, 0, -10);
+
+    audio_btn[8] = lv_btn_create(h1, audio_btn[7]);
+    lv_obj_align(audio_btn[8], audio_btn[1], LV_ALIGN_OUT_RIGHT_TOP, - 60 / 2, 0);
+    label = lv_label_create(audio_btn[8], label);
+    lv_label_set_text(label, "#D");
+
+    audio_btn[9] = lv_btn_create(h1, audio_btn[7]);
+    lv_obj_align(audio_btn[9], audio_btn[3], LV_ALIGN_OUT_RIGHT_TOP, - 60 / 2, 0);
+    label = lv_label_create(audio_btn[9], label);
+    lv_label_set_text(label, "#F");
+
+    audio_btn[10] = lv_btn_create(h1, audio_btn[7]);
+    lv_obj_align(audio_btn[10], audio_btn[4], LV_ALIGN_OUT_RIGHT_TOP, - 60 / 2, 0);
+    label = lv_label_create(audio_btn[10], label);
+    lv_label_set_text(label, "#A");
+
+    audio_btn[11] = lv_btn_create(h1, audio_btn[7]);
+    lv_obj_align(audio_btn[11], audio_btn[5], LV_ALIGN_OUT_RIGHT_TOP, - 60 / 2, 0);
+    label = lv_label_create(audio_btn[11], label);
+    lv_label_set_text(label, "#B");
+}
+
 static void body_page_info(lv_obj_t * parent)
 {
     // lv_obj_t * txt = lv_label_create(parent, NULL);
@@ -609,7 +705,7 @@ static void side_btn_event_callback(lv_obj_t * obj, lv_event_t event)
                     case GUI_PAGE_AUDIO: {
                         lv_label_set_text(state, LV_SYMBOL_AUDIO);
                         lv_obj_set_style(state, &lv_style_scr);
-                        // body_page_audio(body);
+                        body_page_audio(body);
                     }
                     break;
 

@@ -32,7 +32,7 @@
 #include "gui.h"
 #include "touch.h"
 
-static const char *TAG = "APP_BADGE";
+static const char *TAG = "main";
 
 static constexpr gpio_num_t SDA = GPIO_NUM_3;
 static constexpr gpio_num_t SCL = GPIO_NUM_5;
@@ -198,6 +198,7 @@ void memory_monitor(lv_task_t * param)
            mon.frag_pct,
            (int)mon.free_biggest_size,
            esp_get_free_heap_size());
+    printf("test: %f\n", 5.1);
 }
 
 static void gui_tick_task(void * arg)
