@@ -48,6 +48,12 @@ static lv_obj_t * hum;
 static lv_obj_t * light;
 static lv_obj_t * motion;
 
+static lv_obj_t * chart = NULL;
+static lv_chart_series_t * ser_pitch;
+static lv_chart_series_t * ser_roll;
+static lv_chart_series_t * ser_yaw;
+static lv_obj_t * motion_table;
+
 typedef enum {
     GUI_PAGE_LED = 0,
     GUI_PAGE_MONITOR,
@@ -94,8 +100,15 @@ static void sensor_update(gui_sensor_t *sensor)
         lv_label_set_text(light, str);
     }
     if (gui_page == GUI_PAGE_MOTION) {
-        sprintf(str, "Motion: %.2f, %.2f, %.2f", sensor->pitch, sensor->roll, sensor->yaw);
-        lv_label_set_text(motion, str);
+        sprintf(str, "%.2f", sensor->pitch);
+        lv_table_set_cell_value(motion_table, 0, 1, str);
+        sprintf(str, "%.2f", sensor->roll);
+        lv_table_set_cell_value(motion_table, 1, 1, str);
+        sprintf(str, "%.2f", sensor->yaw);
+        lv_table_set_cell_value(motion_table, 2, 1, str);
+        lv_chart_set_next(chart, ser_pitch, (uint16_t)(sensor->pitch + 180));
+        lv_chart_set_next(chart, ser_roll, (uint16_t)(sensor->roll + 180));
+        lv_chart_set_next(chart, ser_yaw, (uint16_t)(sensor->yaw + 180));
     }
 }
 
@@ -163,13 +176,86 @@ static void body_page_monitor(lv_obj_t * parent)
 
 static void body_page_motion(lv_obj_t * parent)
 {
-    lv_obj_t * h = lv_cont_create(parent, NULL);
-    // lv_obj_set_click(h, false);
-    lv_cont_set_fit(h, LV_FIT_TIGHT);
-    lv_cont_set_layout(h, LV_LAYOUT_COL_L);
+    lv_obj_t * h1 = lv_cont_create(parent, NULL);
+    lv_cont_set_fit(h1, LV_FIT_TIGHT);
+    lv_cont_set_layout(h1, LV_LAYOUT_COL_M);
 
-    motion = lv_label_create(h, NULL);
+    chart = lv_chart_create(h1, NULL);
+    lv_obj_set_size(chart, 550, 250);
+    lv_obj_align(chart, NULL, LV_ALIGN_CENTER, 0, 0);
+    lv_chart_set_type(chart, LV_CHART_TYPE_LINE);   /*Show lines and points too*/
+    lv_chart_set_series_opa(chart, LV_OPA_70);                            /*Opacity of the data series*/
+    lv_chart_set_series_width(chart, 2);                                  /*Line width and point radious*/
+    lv_chart_set_div_line_count(chart, 10, 10);
+    lv_chart_set_point_count(chart, 20);
+    lv_chart_set_range(chart, 0, 360);
+
+    const char * list_of_values = "first\nseco\nthird\n";
+    lv_chart_set_x_tick_length(chart, LV_CHART_TICK_LENGTH_AUTO, LV_CHART_TICK_LENGTH_AUTO);
+    lv_chart_set_x_tick_texts(chart, list_of_values, 3, LV_CHART_AXIS_DRAW_LAST_TICK);
+
+    ser_pitch = lv_chart_add_series(chart, LV_COLOR_RED);
+    ser_roll = lv_chart_add_series(chart, LV_COLOR_GREEN);
+    ser_yaw = lv_chart_add_series(chart, LV_COLOR_BLUE);
+    
+    static lv_style_t style;
+    lv_style_copy(&style, &lv_style_scr);
+    style.text.font = &lv_font_roboto_28;
+
+    /*Create a normal cell style*/
+    static lv_style_t style_cell1;
+    lv_style_copy(&style_cell1, &lv_style_plain);
+    style_cell1.body.border.width = 1;
+    style_cell1.body.border.color = LV_COLOR_BLACK;
+    style_cell1.text.font = &lv_font_roboto_28;
+    style_cell1.text.color = LV_COLOR_RED;
+
+    static lv_style_t style_cell2;
+    lv_style_copy(&style_cell2, &lv_style_plain);
+    style_cell2.body.border.width = 1;
+    style_cell2.body.border.color = LV_COLOR_BLACK;
+    style_cell2.text.font = &lv_font_roboto_28;
+    style_cell2.text.color = LV_COLOR_GREEN;
+
+    static lv_style_t style_cell3;
+    lv_style_copy(&style_cell3, &lv_style_plain);
+    style_cell3.body.border.width = 1;
+    style_cell3.body.border.color = LV_COLOR_BLACK;
+    style_cell3.text.font = &lv_font_roboto_28;
+    style_cell3.text.color = LV_COLOR_BLUE;
+
+    motion_table = lv_table_create(h1, NULL);
+    lv_table_set_style(motion_table, LV_TABLE_STYLE_CELL1, &style_cell1);
+    lv_table_set_style(motion_table, LV_TABLE_STYLE_CELL2, &style_cell2);
+    lv_table_set_style(motion_table, LV_TABLE_STYLE_CELL3, &style_cell3);
+    lv_obj_align(motion_table, chart, LV_ALIGN_OUT_BOTTOM_MID, 0, LV_DPI / 4);
+
+    lv_table_set_col_cnt(motion_table, 2);
+    lv_table_set_row_cnt(motion_table, 3);
+    lv_table_set_col_width(motion_table, 0, LV_DPI);
+    lv_table_set_col_width(motion_table, 1, LV_DPI);
+
+    lv_table_set_cell_type(motion_table, 0, 0, 1);
+    lv_table_set_cell_type(motion_table, 0, 1, 1);
+    lv_table_set_cell_type(motion_table, 1, 0, 2);
+    lv_table_set_cell_type(motion_table, 1, 1, 2);
+    lv_table_set_cell_type(motion_table, 2, 0, 3);
+    lv_table_set_cell_type(motion_table, 2, 1, 3);
+
+    lv_table_set_cell_value(motion_table, 0, 0, "Pitch:");
+    lv_table_set_cell_value(motion_table, 1, 0, "Roll:");
+    lv_table_set_cell_value(motion_table, 2, 0, "Yaw:");
+
+    lv_table_set_cell_value(motion_table, 0, 1, "");
+    lv_table_set_cell_value(motion_table, 1, 1, "");
+    lv_table_set_cell_value(motion_table, 2, 1, "");
+
     sensor_update(&gui_sensor);
+}
+
+static void body_page_touch(lv_obj_t * parent)
+{
+
 }
 
 static lv_obj_t * color_picker;
@@ -643,6 +729,22 @@ static void body_page_info(lv_obj_t * parent)
     LV_IMG_DECLARE(espressif);
     lv_obj_t * esp_img = lv_img_create(parent, NULL);
     lv_img_set_src(esp_img, &espressif);
+
+    // /*Create a Page*/
+    // lv_obj_t * page = lv_page_create(parent, NULL);
+    // lv_obj_set_size(page, lv_disp_get_hor_res(NULL) / 3, lv_disp_get_ver_res(NULL) / 2);
+    // lv_obj_set_top(page, true);
+    // lv_obj_align(page, esp_img, LV_ALIGN_IN_TOP_RIGHT,  LV_DPI, LV_DPI);
+
+    lv_obj_t *label = lv_label_create(parent, NULL);
+    lv_label_set_text(label, "Espressif Systems is a multinational, fabless semiconductor company established in \n"
+                      "2008, with headquarters in Shanghai and offices in Greater China, India and Europe. We \n"
+                      "have a passionate team of engineers and scientists from all over the world, focused on \n"
+                      "developing cutting-edge WiFi-and-Bluetooth, low-power IoT solutions. We have created \n"
+                      "the popular ESP8266 and ESP32 series of chips, modules and development boards. By \n"
+                      "leveraging wireless computing, we provide green, versatile and cost-effective chipsets. \n"
+                      "We have always been committed to offering IoT solutions that are secure, robust and \n"
+                      "power-efficient.");
 }
 
 static void side_btn_event_callback(lv_obj_t * obj, lv_event_t event)
@@ -698,7 +800,7 @@ static void side_btn_event_callback(lv_obj_t * obj, lv_event_t event)
                     case GUI_PAGE_TOUCH: {
                         lv_label_set_text(state, MY_TOUCH_SYMBOL);
                         lv_obj_set_style(state, &style_my_symbol);
-                        // body_page_touch(body);
+                        body_page_touch(body);
                     }
                     break;
 
@@ -738,10 +840,6 @@ static void side_btn_event_callback(lv_obj_t * obj, lv_event_t event)
 
 static void side_create(void)
 {
-    // lv_obj_t * h = lv_cont_create(lv_scr_act(), NULL);
-    // lv_cont_set_fit(h, LV_FIT_TIGHT);
-    // lv_cont_set_layout(h, LV_LAYOUT_CENTER);
-
     lv_obj_t * list = lv_list_create(lv_scr_act(), NULL);
 
     lv_obj_t * label;
@@ -774,8 +872,6 @@ static void side_create(void)
     list_btn = lv_list_add_btn(list, LV_SYMBOL_AUDIO, "Audio");
     list_btn->user_data = GUI_PAGE_AUDIO;
     lv_obj_set_event_cb(list_btn, side_btn_event_callback);
-    // label = lv_list_get_btn_img(list_btn);
-    // lv_obj_set_style(label, &style_symbol);
 
     list_btn = lv_list_add_btn(list, MY_CAMERA_SYMBOL, "Camera");
     list_btn->user_data = GUI_PAGE_CAMERA;
@@ -796,19 +892,14 @@ static void side_create(void)
     lv_obj_set_pos(list, LV_HOR_RES - (LV_HOR_RES / 4) * 1, lv_obj_get_height(header));
 
     lv_obj_t * h = lv_cont_create(lv_scr_act(), NULL);
-    // lv_cont_set_fit(h, LV_FIT_FLOOD);
-    // lv_cont_set_fit2(h, LV_FIT_FLOOD, LV_FIT_FLOOD);
     lv_cont_set_layout(h, LV_LAYOUT_CENTER);
+
+    LV_IMG_DECLARE(logo);
+    lv_obj_t * img = lv_img_create(h, NULL);
+    lv_img_set_src(img, &logo);
+
     lv_obj_t * txt = lv_label_create(h, NULL);
     lv_label_set_text(txt, "ESP32-S2Beta-HMI");
-    LV_IMG_DECLARE(QR);
-    // lv_obj_t * canvas = lv_canvas_create(h, NULL);
-    // lv_canvas_set_buffer(canvas, canvas_buffer, 100, 100, LV_IMG_CF_TRUE_COLOR);
-    // lv_canvas_fill_bg(canvas, LV_COLOR_BLUE);
-    // lv_canvas_set_px(canvas, 10, 10, LV_COLOR_RED);
-    // lv_canvas_draw_img(canvas, 0, 0, &QR, NULL);
-    lv_obj_t * qr = lv_img_create(h, NULL);
-    lv_img_set_src(qr, &QR);
 
     lv_obj_set_size(h, (LV_HOR_RES / 4) * 1, LV_VER_RES - (lv_obj_get_height(header) + lv_obj_get_height(list)));
     lv_obj_set_pos(h, LV_HOR_RES - (LV_HOR_RES / 4) * 1, lv_obj_get_height(header) + lv_obj_get_height(list));

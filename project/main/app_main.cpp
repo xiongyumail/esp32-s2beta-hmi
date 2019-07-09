@@ -40,7 +40,7 @@ static constexpr uint32_t CLOCK_SPEED = 400000;  // range from 100 KHz ~ 400Hz
 
 /* MPU configuration */
 
-static constexpr uint16_t kSampleRate      = 10;  // Hz
+static constexpr uint16_t kSampleRate      = 100;  // Hz
 static constexpr mpud::accel_fs_t kAccelFS = mpud::ACCEL_FS_4G;
 static constexpr mpud::gyro_fs_t kGyroFS   = mpud::GYRO_FS_500DPS;
 static constexpr mpud::dlpf_t kDLPF        = mpud::DLPF_98HZ;
@@ -71,7 +71,6 @@ static esp_err_t wifi_event_handler(void *ctx, system_event_t *event)
 
 static void wifi_init(void)
 {
-    tcpip_adapter_init();
     wifi_event_group = xEventGroupCreate();
     ESP_ERROR_CHECK(esp_event_loop_init(wifi_event_handler, NULL));
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
@@ -198,7 +197,6 @@ void memory_monitor(lv_task_t * param)
            mon.frag_pct,
            (int)mon.free_biggest_size,
            esp_get_free_heap_size());
-    printf("test: %f\n", 5.1);
 }
 
 static void gui_tick_task(void * arg)
@@ -209,8 +207,6 @@ static void gui_tick_task(void * arg)
     }
 }
 
-static lv_color_t *lv_buf = NULL;
-
 void gui_task(void *arg)
 {
     lcd_init();
@@ -220,9 +216,12 @@ void gui_task(void *arg)
     lv_init();
     /*Create a display buffer*/
     static lv_disp_buf_t disp_buf;
-    // lv_buf = (lv_color_t *)heap_caps_malloc(LV_HOR_RES_MAX * LV_VER_RES_MAX / 200, MALLOC_CAP_DMA);
-    lv_buf = (lv_color_t *)heap_caps_malloc(sizeof(uint16_t) * LV_HOR_RES_MAX * LV_VER_RES_MAX, MALLOC_CAP_SPIRAM);
-    lv_disp_buf_init(&disp_buf, lv_buf, NULL, LV_HOR_RES_MAX * LV_VER_RES_MAX);
+    static lv_color_t *lv_buf1 = NULL;
+    static lv_color_t *lv_buf2 = NULL;
+    // lv_buf = (lv_color_t *)heap_caps_malloc(sizeof(uint16_t) * LV_HOR_RES_MAX * LV_VER_RES_MAX / 200, MALLOC_CAP_DMA);
+    lv_buf1 = (lv_color_t *)heap_caps_malloc(sizeof(uint16_t) * LV_HOR_RES_MAX * LV_VER_RES_MAX, MALLOC_CAP_SPIRAM);
+    // lv_buf2 = (lv_color_t *)heap_caps_malloc(sizeof(uint16_t) * LV_HOR_RES_MAX * LV_VER_RES_MAX, MALLOC_CAP_SPIRAM);
+    lv_disp_buf_init(&disp_buf, lv_buf1, NULL, LV_HOR_RES_MAX * LV_VER_RES_MAX);
 
     /*Create a display*/
     lv_disp_drv_t disp_drv;
@@ -286,10 +285,13 @@ extern "C" void app_main() {
     }
     ESP_ERROR_CHECK(ret);
 
+    tcpip_adapter_init();
+    ESP_ERROR_CHECK( esp_event_loop_create_default() );
+
     ESP_LOGI(TAG, "Initializing SNTP");
-    // sntp_setoperatingmode(SNTP_OPMODE_POLL);
-    // sntp_setservername(0, "pool.ntp.org");
-    // sntp_init();
+    sntp_setoperatingmode(SNTP_OPMODE_POLL);
+    sntp_setservername(0, "pool.ntp.org");
+    sntp_init();
     setenv("TZ", "CST-8", 1);
     tzset();
 
@@ -297,7 +299,7 @@ extern "C" void app_main() {
     button_init(button_press);
     // Initialize I2C on port 0 using I2Cbus interface
     i2c0.begin(SDA, SCL, CLOCK_SPEED);
-    i2c0.setTimeout(3000);
+    i2c0.setTimeout(100);
     hts221 = iot_hts221_create();
     bh1750 = iot_bh1750_create(I2C_NUM_0, BH1750_I2C_ADDRESS_DEFAULT);
     iot_bh1750_power_on(bh1750);
@@ -397,7 +399,7 @@ static void printTask(void*)
 
     vTaskDelay(2000 / portTICK_PERIOD_MS);
     while (true) {
-        printf("Pitch: %+6.1f \t Roll: %+6.1f \t Yaw: %+6.1f \n", pitch, roll, yaw);
+        // printf("Pitch: %+6.1f \t Roll: %+6.1f \t Yaw: %+6.1f \n", pitch, roll, yaw);
         
         iot_hts221_get_temperature(hts221, &temperature);
         iot_hts221_get_humidity(hts221, &humidity);
@@ -415,18 +417,18 @@ static void printTask(void*)
         // }
         time(&now);
         localtime_r(&now, &timeinfo);
-        // if (timeinfo.tm_year < (2016 - 1900)) {
-        //     // ESP_LOGE(TAG, "The current date/time error");
-        // } else {
+        if (timeinfo.tm_year < (2016 - 1900)) {
+            // ESP_LOGE(TAG, "The current date/time error");
+        } else {
             if (timeinfo.tm_sec != last_timeinfo.tm_sec) {
                 gui_set_time_change(1000);
             }
-        // }
+        }
         last_timeinfo = timeinfo;
-        printf("temperature: %f\n humidity: %f\r\n", (float)(temperature/10), (float)(humidity/10));
-        printf("light: %f\n", light);
+        // printf("temperature: %f\n humidity: %f\r\n", (float)(temperature/10), (float)(humidity/10));
+        // printf("light: %f\n", light);
         gui_set_sensor((float)(temperature/10), (float)(humidity/10), light, 1000);
         gui_set_motion(pitch, roll, yaw, 1000);
-        vTaskDelay(1000 / portTICK_PERIOD_MS);
+        vTaskDelay(500 / portTICK_PERIOD_MS);
     }
 }
