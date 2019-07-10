@@ -1,0 +1,1 @@
+python spiffsgen.py 0xF0000 spiffs build/storage.bin
