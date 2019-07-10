@@ -16,9 +16,7 @@
 #include "lwip/netdb.h"
 #include "lwip/apps/sntp.h"
 #include "esp_heap_caps.h"
-#include "driver/touch_pad.h"
 #include "esp_log.h"
-#include "button.h"
 #include "I2Cbus.hpp"
 #include "MPU.hpp"
 #include "mpu/math.hpp"
@@ -30,7 +28,6 @@
 #include "lcd.h"
 #include "ft5x06.h"
 #include "gui.h"
-#include "touch.h"
 
 static const char *TAG = "main";
 
@@ -85,79 +82,6 @@ static void wifi_init(void)
     ESP_ERROR_CHECK(esp_wifi_start());
     ESP_LOGI(TAG, "Waiting for wifi");
     xEventGroupWaitBits(wifi_event_group, CONNECTED_BIT, false, true, portMAX_DELAY);
-}
-
-void show_task_mem()
-{
-    char* pbuffer = (char*) malloc(2048);
-    memset(pbuffer, 0x0, 2048);
-
-    printf("----------------------------------------------\r\n");
-    vTaskList(pbuffer);
-    printf("%s", pbuffer);
-    printf("----------------------------------------------\r\n");
-
-    free(pbuffer);
-}
-
-#define MEMLEAK_DEBUG
-static void button_press(uint8_t num, button_press_event_t button_press_event) 
-{
-    static uint32_t button_press_count = 0, last_button_press_count = 0;
-    static uint32_t time_ms = 0, last_time_ms = 0;
-
-    switch (button_press_event) {
-        case BUTTON_PRESS: {
-            button_press_count++;
-            time_ms = system_get_time() / 1000;
-            printf("button press count: %d, free heap size %d\n", button_press_count, esp_get_free_heap_size());
-            if (time_ms - last_time_ms > 0 && time_ms - last_time_ms <= 5000) {
-                if (button_press_count - last_button_press_count >= 5) {
-                    #ifdef MEMLEAK_DEBUG
-                    printf("\r\n--------DMEMLEAK_DEBUG--------\r\n");
-                    show_task_mem();
-                    // pvShowMalloc();
-                    // heap_caps_dump_all();
-                    printf("\r\n------------------------------\r\n");
-                    #endif
-                    last_time_ms = time_ms;
-                    last_button_press_count = button_press_count; 
-                }                 
-            } else {
-                last_time_ms = time_ms;
-                last_button_press_count = button_press_count;
-            }
-        }break;
-
-        case BUTTON_RELEASE: {
-            
-        }break;
-
-        case BUTTON_PRESS_3S: {
-            ESP_LOGI(TAG, "BUTTON_PRESS_3S");
-        }break;
-
-        case BUTTON_RELEASE_3S: {
-
-        }break;
-
-        case BUTTON_PRESS_10S: {
-            ESP_LOGI(TAG, "BUTTON_PRESS_10S");
-        }break; 
-
-        case BUTTON_RELEASE_10S: {
-
-        }break;   
-
-        case BUTTON_PRESS_60S: {
-
-        }break;  
-
-        case BUTTON_RELEASE_60S: {
-
-        }break;  
-    }
-
 }
 
 static lv_disp_t  * disp;
@@ -265,7 +189,8 @@ float light;
 float roll{0}, pitch{0}, yaw{0};
 uint8_t mac[16];
 
-extern "C" void app_main() {
+extern "C" void app_main() 
+{
     ESP_LOGI(TAG, "[APP] Startup..");
     ESP_LOGI(TAG, "[APP] Free memory: %d bytes", esp_get_free_heap_size());
     ESP_LOGI(TAG, "[APP] IDF version: %s", esp_get_idf_version());
@@ -296,7 +221,6 @@ extern "C" void app_main() {
     tzset();
 
     esp_read_mac(mac, ESP_MAC_WIFI_STA);
-    button_init(button_press);
     // Initialize I2C on port 0 using I2Cbus interface
     i2c0.begin(SDA, SCL, CLOCK_SPEED);
     i2c0.setTimeout(100);
@@ -307,8 +231,6 @@ extern "C" void app_main() {
     WS2812B_init(RMT_CHANNEL_0, GPIO_NUM_4, 1);
     wsRGB_t rgb = {0x0, 0x0, 0x0};
     WS2812B_setLeds(&rgb, 1);
-
-    // touch_init();
 
     // Create a task to setup mpu and read sensor data
     xTaskCreate(mpuTask, "mpuTask", 4 * 1024, nullptr, 6, nullptr);
@@ -404,17 +326,7 @@ static void printTask(void*)
         iot_hts221_get_temperature(hts221, &temperature);
         iot_hts221_get_humidity(hts221, &humidity);
         iot_bh1750_get_data(bh1750, &light);
-        // if (abs(temperature - last_temperature) > 1*10) {
-        //     sprintf((char *)epaper_data, " %.1f ℃", (float)(temperature/10));
-        //     // lv_label_set_text(temp_label, (const char *)epaper_data);
-        //     last_temperature = temperature;
-        // }
 
-        // if (abs(humidity - last_humidity) > 2*10) {
-        //     sprintf((char *)epaper_data, " %.1f %%", (float)(humidity/10));
-        //     // lv_label_set_text(hum_label, (const char *)epaper_data);
-        //     last_humidity = humidity;
-        // }
         time(&now);
         localtime_r(&now, &timeinfo);
         if (timeinfo.tm_year < (2016 - 1900)) {
