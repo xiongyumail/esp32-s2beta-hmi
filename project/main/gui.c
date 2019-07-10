@@ -3,6 +3,10 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/queue.h"
+#include "lwip/err.h"
+#include "lwip/sockets.h"
+#include "lwip/sys.h"
+#include <lwip/netdb.h>
 #include "esp_heap_caps.h"
 #include "gui.h"
 #include "WS2812B.h"
@@ -626,12 +630,20 @@ static void body_page_terminal(lv_obj_t * parent)
     lv_obj_set_event_cb(terminal_kb, keyboard_event_cb);
 }
 
+int sockfd = -1;
+struct sockaddr_in des_addr;
+char sendline[128];
+
 static void event_handler(lv_obj_t * obj, lv_event_t event)
 {
     lv_obj_t *label;
-    if(event == LV_EVENT_CLICKED) {
+    if(event == LV_EVENT_PRESSED) {
         label = lv_obj_get_child(obj, NULL);
-        printf("label: %s\n", lv_label_get_text(label));
+        if (sockfd) {
+            sprintf(sendline, "{\"audio\": \"%s\"}", lv_label_get_text(label));
+            printf(sendline);
+            sendto(sockfd, sendline, strlen(sendline), 0, (struct sockaddr*)&des_addr, sizeof(des_addr));
+        }
     }
 }
                                   
@@ -720,6 +732,13 @@ static void body_page_audio(lv_obj_t * parent)
     lv_obj_align(audio_btn[11], audio_btn[5], LV_ALIGN_OUT_RIGHT_TOP, - 60 / 2, 0);
     label = lv_label_create(audio_btn[11], label);
     lv_label_set_text(label, "#B");
+
+    if (sockfd == -1) {
+        sockfd = socket(AF_INET, SOCK_DGRAM, 0);
+        des_addr.sin_family = AF_INET;
+        des_addr.sin_addr.s_addr = inet_addr("192.168.0.255");
+        des_addr.sin_port = htons(9999);
+    }
 }
 
 static void body_page_info(lv_obj_t * parent)
