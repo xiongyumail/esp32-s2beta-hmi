@@ -37,7 +37,7 @@ static constexpr uint32_t CLOCK_SPEED = 400000;  // range from 100 KHz ~ 400Hz
 
 /* MPU configuration */
 
-static constexpr uint16_t kSampleRate      = 100;  // Hz
+static constexpr uint16_t kSampleRate      = 10;  // Hz
 static constexpr mpud::accel_fs_t kAccelFS = mpud::ACCEL_FS_4G;
 static constexpr mpud::gyro_fs_t kGyroFS   = mpud::GYRO_FS_500DPS;
 static constexpr mpud::dlpf_t kDLPF        = mpud::DLPF_98HZ;
