@@ -259,7 +259,7 @@ typedef void * lv_indev_drv_user_data_t;            /*Type of user data in the i
  */
 #define LV_FONT_ROBOTO_12    0
 #define LV_FONT_ROBOTO_16    1
-#define LV_FONT_ROBOTO_22    0
+#define LV_FONT_ROBOTO_22    1
 #define LV_FONT_ROBOTO_28    1
 
 /* Optionally declare your custom fonts here.

@@ -201,10 +201,6 @@ static void body_page_motion(lv_obj_t * parent)
     ser_pitch = lv_chart_add_series(chart, LV_COLOR_RED);
     ser_roll = lv_chart_add_series(chart, LV_COLOR_GREEN);
     ser_yaw = lv_chart_add_series(chart, LV_COLOR_BLUE);
-    
-    static lv_style_t style;
-    lv_style_copy(&style, &lv_style_scr);
-    style.text.font = &lv_font_roboto_28;
 
     /*Create a normal cell style*/
     static lv_style_t style_cell1;
@@ -769,15 +765,19 @@ static void body_page_info(lv_obj_t * parent)
     // lv_obj_set_top(page, true);
     // lv_obj_align(page, esp_img, LV_ALIGN_IN_TOP_RIGHT,  LV_DPI, LV_DPI);
 
+    static lv_style_t style;
+    lv_style_copy(&style, &lv_style_scr);
+    style.text.font = &lv_font_roboto_22;
+
     lv_obj_t *label = lv_label_create(parent, NULL);
-    lv_label_set_text(label, "Espressif Systems is a multinational, fabless semiconductor company established in \n"
-                      "2008, with headquarters in Shanghai and offices in Greater China, India and Europe. We \n"
-                      "have a passionate team of engineers and scientists from all over the world, focused on \n"
-                      "developing cutting-edge WiFi-and-Bluetooth, low-power IoT solutions. We have created \n"
-                      "the popular ESP8266 and ESP32 series of chips, modules and development boards. By \n"
-                      "leveraging wireless computing, we provide green, versatile and cost-effective chipsets. \n"
-                      "We have always been committed to offering IoT solutions that are secure, robust and \n"
-                      "power-efficient.");
+    lv_label_set_style(label, LV_LABEL_STYLE_MAIN, &style);
+    lv_label_set_text(label, "Espressif harnesses technology in  \n"
+                      "order to create a better world with  \n"
+                      "less waste and pollution. By  \n"
+                      "leveraging wireless computing, we  \n"
+                      "create carefully designed products  \n"
+                      "that are more intelligent, adaptable  \n"
+                      "and versatile. \n");
 }
 
 static void side_btn_event_callback(lv_obj_t * obj, lv_event_t event)
@@ -830,12 +830,12 @@ static void side_btn_event_callback(lv_obj_t * obj, lv_event_t event)
                     }
                     break;
 
-                    case GUI_PAGE_TOUCH: {
-                        lv_label_set_text(state, MY_TOUCH_SYMBOL);
-                        lv_obj_set_style(state, &style_my_symbol);
-                        body_page_touch(body);
-                    }
-                    break;
+                    // case GUI_PAGE_TOUCH: {
+                    //     lv_label_set_text(state, MY_TOUCH_SYMBOL);
+                    //     lv_obj_set_style(state, &style_my_symbol);
+                    //     body_page_touch(body);
+                    // }
+                    // break;
 
                     case GUI_PAGE_AUDIO: {
                         lv_label_set_text(state, LV_SYMBOL_AUDIO);
@@ -896,11 +896,11 @@ static void side_create(void)
     label = lv_list_get_btn_img(list_btn);
     lv_obj_set_style(label, &style_my_symbol);
 
-    list_btn = lv_list_add_btn(list, MY_TOUCH_SYMBOL, "Touch");
-    list_btn->user_data = GUI_PAGE_TOUCH;
-    lv_obj_set_event_cb(list_btn, side_btn_event_callback);
-    label = lv_list_get_btn_img(list_btn);
-    lv_obj_set_style(label, &style_my_symbol);
+    // list_btn = lv_list_add_btn(list, MY_TOUCH_SYMBOL, "Touch");
+    // list_btn->user_data = GUI_PAGE_TOUCH;
+    // lv_obj_set_event_cb(list_btn, side_btn_event_callback);
+    // label = lv_list_get_btn_img(list_btn);
+    // lv_obj_set_style(label, &style_my_symbol);
 
     list_btn = lv_list_add_btn(list, LV_SYMBOL_AUDIO, "Audio");
     list_btn->user_data = GUI_PAGE_AUDIO;
