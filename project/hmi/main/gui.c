@@ -637,13 +637,27 @@ char sendline[128];
 static void event_handler(lv_obj_t * obj, lv_event_t event)
 {
     lv_obj_t *label;
-    if(event == LV_EVENT_PRESSED) {
-        label = lv_obj_get_child(obj, NULL);
-        if (sockfd) {
+    label = lv_obj_get_child(obj, NULL);
+    switch (event) {
+        case LV_EVENT_PRESSED: {
             sprintf(sendline, "{\"audio\": \"%s\"}", lv_label_get_text(label));
-            printf(sendline);
-            sendto(sockfd, sendline, strlen(sendline), 0, (struct sockaddr*)&des_addr, sizeof(des_addr));
         }
+        break;
+
+        case LV_EVENT_RELEASED: {
+            sprintf(sendline, "{\"audio\": \"%s\"}", "!");
+        }
+        break;
+
+        default: {
+            return;
+        }
+        break;
+    }
+
+    if (sockfd) {
+        printf(sendline);
+        sendto(sockfd, sendline, strlen(sendline), 0, (struct sockaddr*)&des_addr, sizeof(des_addr));
     }
 }
                                   
@@ -726,12 +740,12 @@ static void body_page_audio(lv_obj_t * parent)
     audio_btn[10] = lv_btn_create(h1, audio_btn[7]);
     lv_obj_align(audio_btn[10], audio_btn[4], LV_ALIGN_OUT_RIGHT_TOP, - 60 / 2, 0);
     label = lv_label_create(audio_btn[10], label);
-    lv_label_set_text(label, "#A");
+    lv_label_set_text(label, "#G");
 
     audio_btn[11] = lv_btn_create(h1, audio_btn[7]);
     lv_obj_align(audio_btn[11], audio_btn[5], LV_ALIGN_OUT_RIGHT_TOP, - 60 / 2, 0);
     label = lv_label_create(audio_btn[11], label);
-    lv_label_set_text(label, "#B");
+    lv_label_set_text(label, "#A");
 
     if (sockfd == -1) {
         sockfd = socket(AF_INET, SOCK_DGRAM, 0);
