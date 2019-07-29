@@ -6,10 +6,6 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/queue.h"
-#include "lwip/err.h"
-#include "lwip/sockets.h"
-#include "lwip/sys.h"
-#include <lwip/netdb.h>
 #include "esp_heap_caps.h"
 #include "esp_spiffs.h"
 #include "driver/i2s.h"
@@ -18,7 +14,6 @@
 #include "es8311.h"
 #include "touch.h"
 #include "mp3dec.h"
-#include "WS2812B.h"
 
 static const char *TAG = "AUDIO";
 
@@ -34,8 +29,6 @@ static const char *TAG = "AUDIO";
 #define SAMPLE_PER_CYCLE (SAMPLE_RATE/WAVE_FREQ_HZ)
 
 bool play_flag = 0;
-
-static QueueHandle_t audio_queue = NULL;
 
 void aplay_mp3(char *path)
 {
@@ -130,60 +123,13 @@ void aplay_mp3(char *path)
     ESP_LOGI(TAG,"end mp3 decode ..");
 }
 
-typedef struct 
-{
-    char rld[4];    //riff 标志符号
-    int  rLen;      //
-    char wld[4];    //格式类型（wave）
-    char fld[4];    //"fmt"
- 
-    int fLen;   //sizeof(wave format matex)
- 
-    short wFormatTag;   //编码格式
-    short wChannels;    //声道数
-    int   nSamplesPersec;  //采样频率
-    int   nAvgBitsPerSample;//WAVE文件采样大小
-    short wBlockAlign; //块对齐
-    short wBitsPerSample;   //WAVE文件采样大小
-
-    char dld[4];        //”data“
-    int  wSampleLength; //音频数据的大小
- }WAV_HEADER;
-
-void aplay_wav(char* filename, uint8_t state)
-{
-    WAV_HEADER wav_head;
-    FILE *f= fopen(filename, "r");
-    if (f == NULL) {
-            ESP_LOGE(TAG,"Failed to open file:%s",filename);
-            return;
-    }
-    //fprintf(f, "Hello %s!\n", card->cid.name);
-    int rlen=fread(&wav_head,1,sizeof(wav_head),f);
-    if(rlen!=sizeof(wav_head)){
-            ESP_LOGE(TAG,"read faliled");
-            return;
-    }
-    int channels = wav_head.wChannels;
-    int frequency = wav_head.nSamplesPersec;
-    int bit = wav_head.wBitsPerSample;
-    int datalen= wav_head.wSampleLength;
-    // i2s_set_clk(I2S_NUM, frequency, 16, channels);
-    (void)datalen;
-    ESP_LOGI(TAG,"channels:%d,frequency:%d,bit:%d\n",channels,frequency,bit);
-    char* samples_data = malloc(1024);
-    do{
-        rlen=fread(samples_data,1,1024,f);
-        //datalen-=rlen;
-        i2s_write_bytes(I2S_NUM, samples_data, rlen, 1000 / portTICK_RATE_MS);
-    }while(rlen>0);
-    fclose(f);
-    free(samples_data);
-    f=NULL;
-}
-
 static void audio_task(void *arg)
 {
+    //for 36Khz sample rates, we create 100Hz sine wave, every cycle need 36000/100 = 360 samples (4-bytes or 8-bytes each sample)
+    //depend on bits_per_sample
+    //using 6 buffers, we need 60-samples per buffer
+    //if 2-channels, 16-bit each channel, total buffer is 360*4 = 1440 bytes
+    //if 2-channels, 24/32-bit each channel, total buffer is 360*8 = 2880 bytes
     i2s_config_t i2s_config = {
         .mode = I2S_MODE_MASTER | I2S_MODE_TX | I2S_MODE_RX,                                  // Only TX
         .sample_rate = SAMPLE_RATE,
@@ -204,48 +150,18 @@ static void audio_task(void *arg)
     };
     i2s_driver_install(I2S_NUM, &i2s_config, 0, NULL);
     i2s_set_pin(I2S_NUM, &pin_config);
-    i2s_set_clk(I2S_NUM, 8000, 16, 2);
-    int ret;
-    char *file = NULL;
-    WAV_HEADER wav_head;
-    FILE *f = NULL;
-    char samples_data[1024];
+
     while (1) {
-        ret = xQueueReceive(audio_queue, &file, 0);
-        if (ret == pdTRUE) {
-            i2s_zero_dma_buffer(0);
-            if (f) {
-                fclose(f);
-                f = NULL;
-            }
+        aplay_mp3("/spiffs/lemon_tree.mp3");
+        vTaskDelay(1000 / portTICK_RATE_MS);
 
-            f = fopen(file, "r");
-            if (f != NULL)  {
-                fread(&wav_head, 1, sizeof(wav_head), f);
-                ESP_LOGI(TAG, "channels:%d,frequency:%d,bit:%d\n", wav_head.wChannels, wav_head.nSamplesPersec, wav_head.wBitsPerSample);
-            }
-        }
-
-        if (f) {
-            ret = fread(samples_data, 1, 1024, f);
-            if (ret > 0) {
-                i2s_write_bytes(I2S_NUM, samples_data, ret, 1000 / portTICK_RATE_MS);
-            } else {
-                if (f) {
-                    fclose(f);
-                    f = NULL;
-                }
-            }
-        } else {
-            vTaskDelay(10 / portTICK_RATE_MS);
-        }
     }
 }
 
 static void audio_control_task(void *arg)
 {
     uint32_t touch_status = 0, last_touch_status = 0;
-    uint32_t volume = 70;
+    uint32_t volume = 50;
     es8311_set_voice_volume(volume);
     while (1) {
         touch_get_status(&touch_status);
@@ -273,119 +189,14 @@ static void audio_control_task(void *arg)
     }
 }
 
-static void udp_server_task(void *pvParameters)
-{
-    int sockfd;
-    struct sockaddr_in saddr;
-    int r;
-    char recvline[128];
-    struct sockaddr_in presaddr;
-    socklen_t len;
-    
-    sockfd = socket(AF_INET, SOCK_DGRAM, 0);
-    bzero(&saddr, sizeof(saddr));
-    saddr.sin_family = AF_INET;
-    saddr.sin_addr.s_addr = htonl(INADDR_ANY);
-    saddr.sin_port = htons(9999);
-    bind(sockfd, (struct sockaddr*)&saddr, sizeof(saddr));
-
-    char *file = NULL;
-    char piano_ctr[2];
-    wsRGB_t rgb = {0xFF, 0xFF, 0xFF};
-    while (1)
-    {
-        r = recvfrom(sockfd, recvline, sizeof(recvline), 0 , (struct sockaddr*)&presaddr, &len);
-        if (r > 0) {
-            printf("audio: %c\n", recvline[11]);
-            piano_ctr[0] = recvline[11];
-            piano_ctr[1] = recvline[12];
-            if (piano_ctr[0] == '!') {
-                file = "";
-            } else if (piano_ctr[0] == '#') {
-                switch (piano_ctr[1]) {
-                    case 'C': {
-                        file = "/spiffs/074-16.wav";
-                    }
-                    break;
-
-                    case 'D': {
-                        file = "/spiffs/076-16.wav";
-                    }
-                    break;
-
-                    case 'F': {
-                        file = "/spiffs/079-16.wav";
-                    }
-                    break;
-
-                    case 'G': {
-                        file = "/spiffs/081-16.wav";
-                    }
-                    break;
-
-                    case 'A': {
-                        file = "/spiffs/083-16.wav";
-                    }
-                    break;
-                }
-            } else {
-                switch (piano_ctr[0]) {
-                    case 'C': {
-                        file = "/spiffs/073-16.wav";
-                    }
-                    break;
-
-                    case 'D': {
-                        file = "/spiffs/075-16.wav";
-                    }
-                    break;
-
-                    case 'E': {
-                        file = "/spiffs/077-16.wav";
-                    }
-                    break;
-
-                    case 'F': {
-                        file = "/spiffs/078-16.wav";
-                    }
-                    break;
-
-                    case 'G': {
-                        file = "/spiffs/080-16.wav";
-                    }
-                    break;
-
-                    case 'A': {
-                        file = "/spiffs/082-16.wav";
-                    }
-                    break;
-
-                    case 'B': {
-                        file = "/spiffs/084-16.wav";
-                    }
-                    break;
-                }
-            }
-            if (strlen(file) > 0) {
-                xQueueOverwrite(audio_queue, &file);
-                // WS2812B_setLeds(&rgb, 1);
-            }
-        }
-
-    }
-    vTaskDelete(NULL);
-}
-
 int audio_init()
 {
-    audio_queue = xQueueCreate(1, sizeof(char *));
-
     es8311_init(SAMPLE_RATE);
-    // es8311_read_all();
+    es8311_set_voice_volume(50);
+    es8311_read_all();
 
     xTaskCreate(audio_task, "audio_task", 4096, NULL, 5, NULL);
     xTaskCreate(audio_control_task, "audio_control_task", 2048, NULL, 5, NULL);
-    xTaskCreate(udp_server_task, "udp_server", 2048, NULL, 5, NULL);
 
     return 0;
 }

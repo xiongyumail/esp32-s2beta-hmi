@@ -28,11 +28,28 @@ static const char *TAG = "AUDIO";
 
 #define SAMPLE_PER_CYCLE (SAMPLE_RATE/WAVE_FREQ_HZ)
 
-bool play_flag = 0;
+enum {
+    AUDIO_STOP = 0,
+    AUDIO_PLAY,
+    AUDIO_NEXT,
+    AUDIO_LAST
+};
+
+int play_flag = AUDIO_STOP;
+
+#define AUDIO_MAX_PLAY_LIST 3
+
+const char audio_list[AUDIO_MAX_PLAY_LIST][64] = {
+    "/spiffs/lemon_tree_24.mp3",
+    "/spiffs/dream_24.mp3",
+    "/spiffs/nsn_24.mp3"
+};
+
+int audio_play_index = 0;
 
 void aplay_mp3(char *path)
 {
-    ESP_LOGI(TAG,"start to decode ...");
+    ESP_LOGI(TAG,"start to decode %s", path);
     HMP3Decoder hMP3Decoder;
     MP3FrameInfo mp3FrameInfo;
     unsigned char *readBuf=malloc(MAINBUF_SIZE);
@@ -77,11 +94,42 @@ void aplay_mp3(char *path)
     int bytesLeft = 0;
     int outOfData = 0;
     unsigned char* readPtr = readBuf;
+    play_flag = AUDIO_PLAY;
     while (1) {    
-        while (!play_flag) {
-            i2s_zero_dma_buffer(0);
-            vTaskDelay(100 / portTICK_RATE_MS);
+        switch (play_flag) {
+            case AUDIO_STOP: {
+                while (!play_flag) {
+                    i2s_zero_dma_buffer(0);
+                    vTaskDelay(100 / portTICK_RATE_MS);
+                }
+            }
+            break;
+
+            case AUDIO_PLAY: {
+            }
+            break;
+
+            case AUDIO_NEXT: {
+                if (audio_play_index < AUDIO_MAX_PLAY_LIST - 1) {
+                    audio_play_index++;
+                } else {
+                    audio_play_index = 0;
+                }
+                goto stop;
+            }
+            break;
+
+            case AUDIO_LAST: {
+                if (audio_play_index > 0) {
+                    audio_play_index--;
+                } else {
+                    audio_play_index = AUDIO_MAX_PLAY_LIST - 1;
+                }
+                goto stop;
+            }
+            break;
         }
+
         if (bytesLeft < MAINBUF_SIZE) {
             memmove(readBuf, readPtr, bytesLeft);
             int br = fread(readBuf + bytesLeft, 1, MAINBUF_SIZE - bytesLeft, mp3File);
@@ -114,6 +162,8 @@ void aplay_mp3(char *path)
             i2s_write_bytes(0,(const char*)output,mp3FrameInfo.outputSamps*2, 1000 / portTICK_RATE_MS);
         }
     }
+
+stop:
     i2s_zero_dma_buffer(0);
     MP3FreeDecoder(hMP3Decoder);
     free(readBuf);
@@ -152,9 +202,8 @@ static void audio_task(void *arg)
     i2s_set_pin(I2S_NUM, &pin_config);
 
     while (1) {
-        aplay_mp3("/spiffs/lemon_tree.mp3");
+        aplay_mp3(audio_list[audio_play_index]);
         vTaskDelay(1000 / portTICK_RATE_MS);
-
     }
 }
 
@@ -179,7 +228,17 @@ static void audio_control_task(void *arg)
                 break;
 
                 case 0x100: {
-                    play_flag = play_flag ? 0 : 1;
+                    play_flag = play_flag ? AUDIO_STOP : AUDIO_PLAY;
+                }
+                break;
+
+                case 0x800: {
+                    play_flag = AUDIO_LAST;
+                }
+                break;
+
+                case 0x2000: {
+                    play_flag = AUDIO_NEXT;
                 }
                 break;
             }

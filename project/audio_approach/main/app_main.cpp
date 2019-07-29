@@ -19,9 +19,8 @@
 #include "esp_log.h"
 #include "esp_spiffs.h"
 #include "i2c_bus.h"
-#include "touch.h"
+#include "sense_kit.h"
 #include "audio.h"
-#include "WS2812B.h"
 
 static const char *TAG = "main";
 
@@ -150,15 +149,9 @@ extern "C" void app_main() {
 
     esp_read_mac(mac, ESP_MAC_WIFI_STA);
     ESP_ERROR_CHECK(i2c_bus_init());
-    WS2812B_init(RMT_CHANNEL_0, GPIO_NUM_4, 1);
-    wsRGB_t rgb = {0x00, 0x00, 0x00};
-    WS2812B_setLeds(&rgb, 1);
 
     audio_init();
 
-    touch_init();
-    rgb.r = 0xFF;
-    rgb.g = 0xFF;
-    rgb.b = 0xFF;
-    WS2812B_setLeds(&rgb, 1);
+    // touch_init();
+    evb_sense_kit(NULL);
 }
