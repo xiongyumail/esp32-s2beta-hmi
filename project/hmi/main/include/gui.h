@@ -7,6 +7,17 @@ extern "C" {
 #include "lvgl.h"
 
 typedef enum {
+    GUI_PAGE_LED = 0,
+    GUI_PAGE_MONITOR,
+    GUI_PAGE_MOTION,
+    GUI_PAGE_TOUCH,
+    GUI_PAGE_AUDIO,
+    GUI_PAGE_CAMERA,
+    GUI_PAGE_TERMINAL,
+    GUI_PAGE_INFO
+} gui_page_t;
+
+typedef enum {
     BATTERY_FULL,
     BATTERY_3,
     BATTERY_2,
@@ -23,6 +34,10 @@ int gui_set_battery_value(gui_battery_value_t value, int ticks_wait);
 int gui_set_sensor(float temp, float hum, float light, int ticks_wait);
 
 int gui_set_motion(float pitch, float roll, float yaw, int ticks_wait);
+
+int gui_set_camera(lv_color_t *buffer, int ticks_wait);
+
+gui_page_t gui_get_page();
 
 void gui_init(lv_theme_t *th);
 

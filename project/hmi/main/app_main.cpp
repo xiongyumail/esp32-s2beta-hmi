@@ -143,9 +143,9 @@ void gui_task(void *arg)
     static lv_color_t *lv_buf1 = NULL;
     static lv_color_t *lv_buf2 = NULL;
     // lv_buf = (lv_color_t *)heap_caps_malloc(sizeof(uint16_t) * LV_HOR_RES_MAX * LV_VER_RES_MAX / 200, MALLOC_CAP_DMA);
-    lv_buf1 = (lv_color_t *)heap_caps_malloc(sizeof(uint16_t) * LV_HOR_RES_MAX * LV_VER_RES_MAX, MALLOC_CAP_SPIRAM);
+    lv_buf1 = (lv_color_t *)heap_caps_malloc(sizeof(uint16_t) * LV_HOR_RES_MAX * LV_VER_RES_MAX * 2, MALLOC_CAP_SPIRAM);
     // lv_buf2 = (lv_color_t *)heap_caps_malloc(sizeof(uint16_t) * LV_HOR_RES_MAX * LV_VER_RES_MAX, MALLOC_CAP_SPIRAM);
-    lv_disp_buf_init(&disp_buf, lv_buf1, NULL, LV_HOR_RES_MAX * LV_VER_RES_MAX);
+    lv_disp_buf_init(&disp_buf, lv_buf1, NULL, LV_HOR_RES_MAX * LV_VER_RES_MAX * 2);
 
     /*Create a display*/
     lv_disp_drv_t disp_drv;
@@ -174,6 +174,53 @@ void gui_task(void *arg)
     while(1) {
         lv_task_handler();
         vTaskDelay(10 / portTICK_RATE_MS);
+    }
+}
+
+void camera_task(void *arg)
+{
+    int x;
+    int test = 0;
+    lv_color_t *camera_buffer = (lv_color_t *)heap_caps_malloc(LV_CANVAS_BUF_SIZE_TRUE_COLOR(320, 240), MALLOC_CAP_SPIRAM);
+    // lv_color_t *camera_buffer2 = (lv_color_t *)heap_caps_malloc(LV_CANVAS_BUF_SIZE_TRUE_COLOR(320, 240), MALLOC_CAP_SPIRAM);
+    // for(x = 0; x < 320 * 240; x++) {
+    //     camera_buffer1[x] = LV_COLOR_YELLOW;
+    //     camera_buffer2[x] = LV_COLOR_RED;
+    // }
+    while(1) {
+        if (GUI_PAGE_CAMERA == gui_get_page()) {
+            switch (test) {
+                case 0: {
+                    for(x = 0; x < 320 * 240; x++) {
+                        camera_buffer[x] = LV_COLOR_YELLOW;
+                    }
+                    gui_set_camera(camera_buffer, 1000);
+                    test++;
+                }
+                break;
+
+                case 1: {
+                    for(x = 0; x < 320 * 240; x++) {
+                        camera_buffer[x] = LV_COLOR_RED;
+                    }
+                    gui_set_camera(camera_buffer, 1000);
+                    test++;
+                }
+                break;
+
+                case 2: {
+                    for(x = 0; x < 320 * 240; x++) {
+                        camera_buffer[x] = LV_COLOR_ORANGE;
+                    }
+                    gui_set_camera(camera_buffer, 1000);
+                    test = 0;
+                }
+                break;
+            }
+        }
+
+        // gui_set_camera(camera_buffer, 1000);
+        vTaskDelay(100 / portTICK_RATE_MS);
     }
 }
 
@@ -238,6 +285,8 @@ extern "C" void app_main()
     xTaskCreate(printTask, "printTask", 2 * 1024, nullptr, 5, nullptr);
 
     xTaskCreate(gui_task, "gui_task", 4096, NULL, 5, NULL);
+
+    xTaskCreate(camera_task, "camera_task", 2 * 1024, NULL, 5, NULL);
 
     vTaskDelay(1000 /portTICK_RATE_MS);
     wifi_init();
