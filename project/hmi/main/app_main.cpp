@@ -17,6 +17,7 @@
 #include "lwip/apps/sntp.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
+#include "esp_spiffs.h"
 #include "I2Cbus.hpp"
 #include "MPU.hpp"
 #include "mpu/math.hpp"
@@ -28,6 +29,7 @@
 #include "lcd.h"
 #include "ft5x06.h"
 #include "gui.h"
+#include "file_server.h"
 
 static const char *TAG = "main";
 
@@ -116,11 +118,11 @@ void memory_monitor(lv_task_t * param)
 
     lv_mem_monitor_t mon;
     lv_mem_monitor(&mon);
-    printf("used: %6d (%3d %%), frag: %3d %%, biggest free: %6d, system free: %d\n", (int)mon.total_size - mon.free_size,
+    printf("used: %6d (%3d %%), frag: %3d %%, biggest free: %6d, system free: %d/%d\n", (int)mon.total_size - mon.free_size,
            mon.used_pct,
            mon.frag_pct,
            (int)mon.free_biggest_size,
-           esp_get_free_heap_size());
+           heap_caps_get_free_size(MALLOC_CAP_INTERNAL), esp_get_free_heap_size());
 }
 
 static void gui_tick_task(void * arg)
@@ -177,52 +179,40 @@ void gui_task(void *arg)
     }
 }
 
+#define PORT 10001
+
 void camera_task(void *arg)
 {
-    int x;
-    int test = 0;
+    FILE *fd = NULL;
+    char filepath[128] = "/spiffs/less.bin";
+    struct stat file_stat;
     lv_color_t *camera_buffer = (lv_color_t *)heap_caps_malloc(LV_CANVAS_BUF_SIZE_TRUE_COLOR(320, 240), MALLOC_CAP_SPIRAM);
-    // lv_color_t *camera_buffer2 = (lv_color_t *)heap_caps_malloc(LV_CANVAS_BUF_SIZE_TRUE_COLOR(320, 240), MALLOC_CAP_SPIRAM);
-    // for(x = 0; x < 320 * 240; x++) {
-    //     camera_buffer1[x] = LV_COLOR_YELLOW;
-    //     camera_buffer2[x] = LV_COLOR_RED;
-    // }
-    while(1) {
+
+    while (1) {
         if (GUI_PAGE_CAMERA == gui_get_page()) {
-            switch (test) {
-                case 0: {
-                    for(x = 0; x < 320 * 240; x++) {
-                        camera_buffer[x] = LV_COLOR_YELLOW;
-                    }
-                    gui_set_camera(camera_buffer, 1000);
-                    test++;
-                }
-                break;
-
-                case 1: {
-                    for(x = 0; x < 320 * 240; x++) {
-                        camera_buffer[x] = LV_COLOR_RED;
-                    }
-                    gui_set_camera(camera_buffer, 1000);
-                    test++;
-                }
-                break;
-
-                case 2: {
-                    for(x = 0; x < 320 * 240; x++) {
-                        camera_buffer[x] = LV_COLOR_ORANGE;
-                    }
-                    gui_set_camera(camera_buffer, 1000);
-                    test = 0;
-                }
-                break;
+            if (stat(filepath, &file_stat) == -1) {
+                vTaskDelay(1000 / portTICK_RATE_MS);
+                continue;
             }
+            fd = fopen(filepath, "r");
+            if (!fd) {
+                ESP_LOGE(TAG, "Failed to read existing file : %s", filepath);
+                vTaskDelay(1000 / portTICK_RATE_MS);
+                continue;
+            }
+            fread(camera_buffer, 1, 320 * 240 * 2, fd);
+            fclose(fd);
+            gui_set_camera(camera_buffer, 1000);
         }
-
-        // gui_set_camera(camera_buffer, 1000);
-        vTaskDelay(100 / portTICK_RATE_MS);
+        vTaskDelay(1000 / portTICK_RATE_MS);
     }
+    vTaskDelete(NULL);
 }
+
+/* Declare the function which starts the file server.
+ * Implementation of this function is to be found in
+ * file_server.c */
+extern esp_err_t start_file_server(const char *base_path);
 
 
 static void mpuISR(void*);
@@ -257,6 +247,55 @@ extern "C" void app_main()
     }
     ESP_ERROR_CHECK(ret);
 
+    ESP_LOGI(TAG, "Initializing SPIFFS");
+    
+    esp_vfs_spiffs_conf_t conf = {
+      .base_path = "/spiffs",
+      .partition_label = NULL,
+      .max_files = 5,
+      .format_if_mount_failed = true
+    };
+    
+    // Use settings defined above to initialize and mount SPIFFS filesystem.
+    // Note: esp_vfs_spiffs_register is an all-in-one convenience function.
+    ret = esp_vfs_spiffs_register(&conf);
+
+    if (ret != ESP_OK) {
+        if (ret == ESP_FAIL) {
+            ESP_LOGE(TAG, "Failed to mount or format filesystem");
+        } else if (ret == ESP_ERR_NOT_FOUND) {
+            ESP_LOGE(TAG, "Failed to find SPIFFS partition");
+        } else {
+            ESP_LOGE(TAG, "Failed to initialize SPIFFS (%s)", esp_err_to_name(ret));
+        }
+        return;
+    }
+    
+    size_t total = 0, used = 0;
+    ret = esp_spiffs_info(NULL, &total, &used);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to get SPIFFS partition information (%s)", esp_err_to_name(ret));
+    } else {
+        ESP_LOGI(TAG, "Partition size: total: %d, used: %d", total, used);
+    }
+
+    // Open renamed file for reading
+    ESP_LOGI(TAG, "Reading file");
+    FILE* f = fopen("/spiffs/spiffs.txt", "r");
+    if (f == NULL) {
+        ESP_LOGE(TAG, "Failed to open file for reading");
+        return;
+    }
+    char line[64];
+    fgets(line, sizeof(line), f);
+    fclose(f);
+    // strip newline
+    char* pos = strchr(line, '\n');
+    if (pos) {
+        *pos = '\0';
+    }
+    ESP_LOGI(TAG, "Read from file: '%s'", line);
+
     tcpip_adapter_init();
     ESP_ERROR_CHECK( esp_event_loop_create_default() );
 
@@ -290,6 +329,9 @@ extern "C" void app_main()
 
     vTaskDelay(1000 /portTICK_RATE_MS);
     wifi_init();
+
+    /* Start the file server */
+    ESP_ERROR_CHECK(start_file_server("/spiffs"));
 }
 
 /* Tasks */
