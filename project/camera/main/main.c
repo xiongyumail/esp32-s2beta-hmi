@@ -20,6 +20,10 @@
 #include "esp_log.h"
 #include <math.h>
 #include "esp_http_client.h"
+#include "lvgl.h"
+#include "lcd.h"
+#include "gui.h"
+#include "encoder.h"
 
 static const char *TAG = "main";
 
@@ -34,10 +38,12 @@ static esp_err_t wifi_event_handler(void *ctx, system_event_t *event)
             break;
         case SYSTEM_EVENT_STA_GOT_IP:
             xEventGroupSetBits(wifi_event_group, CONNECTED_BIT);
+            gui_set_wifi_state(true, 1000);
             break;
         case SYSTEM_EVENT_STA_DISCONNECTED:
             esp_wifi_connect();
             xEventGroupClearBits(wifi_event_group, CONNECTED_BIT);
+            gui_set_wifi_state(false, 1000);
             break;
         default:
             break;
@@ -125,30 +131,168 @@ esp_err_t _http_event_handler(esp_http_client_event_t *evt)
     return ESP_OK;
 }
 
-void udp_trans(uint8_t* src, uint32_t fb_size)
+static lv_disp_t *disp[2];
+static lv_indev_t *indev[1];
+
+static void IRAM_ATTR lv_disp_flush1(lv_disp_drv_t * disp_drv, const lv_area_t * area, lv_color_t * color_p)
 {
-    esp_err_t err;
-    esp_http_client_config_t config = {
-        .url = "http://192.168.1.219/upload",
-        .event_handler = _http_event_handler,
-    };
-    esp_http_client_handle_t client = esp_http_client_init(&config);
+    uint32_t len = (sizeof(uint16_t) * ((area->y2 - area->y1 + 1)*(area->x2 - area->x1 + 1)));
 
-    // POST
-    esp_http_client_set_url(client, "http://192.168.1.219/upload");
-    esp_http_client_set_method(client, HTTP_METHOD_POST);
-    esp_http_client_set_post_field(client, (const char *)src, fb_size);
-    err = esp_http_client_perform(client);
-    if (err == ESP_OK) {
-        ESP_LOGI(TAG, "HTTP POST Status = %d, content_length = %d",
-                esp_http_client_get_status_code(client),
-                esp_http_client_get_content_length(client));
-    } else {
-        ESP_LOGE(TAG, "HTTP POST request failed: %s", esp_err_to_name(err));
-    }
+    lcd_select(0);
+    lcd_set_index(area->x1, area->y1, area->x2, area->y2);
+    lcd_write_data((uint16_t *)color_p, len);
 
-    esp_http_client_cleanup(client);
+    lv_disp_flush_ready(disp_drv);
 }
+
+static void IRAM_ATTR lv_disp_flush2(lv_disp_drv_t * disp_drv, const lv_area_t * area, lv_color_t * color_p)
+{
+    uint32_t len = (sizeof(uint16_t) * ((area->y2 - area->y1 + 1)*(area->x2 - area->x1 + 1)));
+
+    lcd_select(1);
+    lcd_set_index(area->x1, area->y1, area->x2, area->y2);
+    lcd_write_data((uint16_t *)color_p, len);
+
+    lv_disp_flush_ready(disp_drv);
+}
+
+bool lv_encoder_read(lv_indev_drv_t * drv, lv_indev_data_t*data)
+{
+  data->enc_diff = encoder_get_new_moves();
+  if(encoder_get_button_state()) {
+      data->state = LV_INDEV_STATE_PR;
+  } else {
+      data->state = LV_INDEV_STATE_REL;
+  }
+  
+  return false; /*No buffering now so no more data read*/
+}
+
+static void lv_memory_monitor(lv_task_t * param)
+{
+    (void) param; /*Unused*/
+
+    lv_mem_monitor_t mon;
+    lv_mem_monitor(&mon);
+    printf("used: %6d (%3d %%), frag: %3d %%, biggest free: %6d, system free: %d/%d\n", (int)mon.total_size - mon.free_size,
+           mon.used_pct,
+           mon.frag_pct,
+           (int)mon.free_biggest_size,
+           heap_caps_get_free_size(MALLOC_CAP_INTERNAL), esp_get_free_heap_size());
+}
+
+static void lv_tick_task(void * arg)
+{
+    while(1) {
+        lv_tick_inc(10);
+        vTaskDelay(10 / portTICK_RATE_MS);
+    }
+}
+
+static void gui_task(void *arg)
+{
+    encoder_init();
+    lcd_init();
+    
+    xTaskCreate(lv_tick_task, "lv_tick_task", 1024, NULL, 5, NULL);
+
+    lv_init();
+
+    /*Create a display buffer*/
+    static lv_disp_buf_t disp_buf1;
+    static lv_color_t *buf1_1 = NULL;
+    buf1_1 = (lv_color_t *)heap_caps_malloc(sizeof(lv_color_t) * (240 * 240), MALLOC_CAP_SPIRAM);
+    lv_disp_buf_init(&disp_buf1, buf1_1, NULL, 240 * 240);
+
+    /*Create a display*/
+    lv_disp_drv_t disp_drv;
+    lv_disp_drv_init(&disp_drv);            /*Basic initialization*/
+    disp_drv.buffer = &disp_buf1;
+    disp_drv.flush_cb = lv_disp_flush1;    /*Used when `LV_VDB_SIZE != 0` in lv_conf.h (buffered drawing)*/
+    disp[0] = lv_disp_drv_register(&disp_drv);
+
+    /*Create an other buffer for double buffering*/
+    static lv_disp_buf_t disp_buf2;
+    static lv_color_t *buf2_1 = NULL;
+    buf2_1 = (lv_color_t *)heap_caps_malloc(sizeof(lv_color_t) * (240 * 135), MALLOC_CAP_SPIRAM);
+    lv_disp_buf_init(&disp_buf2, buf2_1, NULL, 240 * 135);
+
+    /*Create an other display*/
+    lv_disp_drv_init(&disp_drv);            /*Basic initialization*/
+    disp_drv.buffer = &disp_buf2;
+    disp_drv.flush_cb = lv_disp_flush2;    /*Used when `LV_VDB_SIZE != 0` in lv_conf.h (buffered drawing)*/
+    disp_drv.hor_res = 240;
+    disp_drv.ver_res = 135;
+    disp[1] = lv_disp_drv_register(&disp_drv);
+
+    lv_indev_drv_t indev_drv;
+    lv_indev_drv_init(&indev_drv);      /*Basic initialization*/
+    indev_drv.type = LV_INDEV_TYPE_ENCODER;
+    indev_drv.read_cb = lv_encoder_read;
+    /*Register the driver in LittlevGL and save the created input device object*/
+    indev[0] = lv_indev_drv_register(&indev_drv);
+
+    lv_disp_set_default(disp[0]);
+
+    lv_task_create(lv_memory_monitor, 3000, LV_TASK_PRIO_MID, NULL);
+
+    gui_init(disp, indev, lv_theme_material_init(0, NULL));
+
+    while(1) {
+        lv_task_handler();
+        vTaskDelay(10 / portTICK_RATE_MS);
+    }
+}
+
+typedef union
+{
+    struct
+    {
+        uint16_t green_h :  3;
+        uint16_t red : 5;
+        uint16_t blue : 5;
+        uint16_t green_l :  3;
+    } ch;
+    uint16_t full;
+} cam_color16_t;
+
+cam_color16_t *lcd_cam_buffer = NULL;
+
+uint16_t *cam_buffer = NULL;
+
+void camera_trans(uint8_t* src, uint32_t fb_size)
+{
+    int x, y;
+    int i = 0;
+    uint16_t data;
+    lcd_select(0);
+    for (y = 0; y < 240; y++) {
+        for (x = 0; x < 240; x++) {
+            data = (src[i+0] << 8) | (src[i+1]);
+            // lcd_cam_buffer[y*240 + x].ch.red = 0;//(src[i+0] << 5) & 0x1f;
+            // lcd_cam_buffer[y*240 + x].ch.green_h = 0;//(src[i+1] >> 5) & 0x07;
+            // lcd_cam_buffer[y*240 + x].ch.green_l = 0;//(src[i+1] << 1) & 0x07;
+            // lcd_cam_buffer[y*240 + x].ch.blue = (src[i+1]) & 0x1f;
+            lcd_cam_buffer[y*240 + x].full = data;
+            // printf("%x\n", data);
+            i += 2;
+        }
+        i += 80 * 2;
+    }
+    lcd_set_index(0, 0, 239, 239);
+    lcd_write_data(lcd_cam_buffer, 240*240*2);
+    
+}
+
+
+typedef union {
+    struct {
+        uint16_t b:5;
+        uint16_t g:6;
+        uint16_t r:5;
+    };
+    uint16_t val;
+} rgb_sw_t;
 
 void app_main()
 {
@@ -170,14 +314,37 @@ void app_main()
     setenv("TZ", "CST-8", 1);
     tzset();
 
-    wifi_init();
+    lcd_init();
+    // xTaskCreate(gui_task, "gui_task", 4096, NULL, 5, NULL);
+    // xTaskCreate(sensor_task, "sensor_task", 2048, NULL, 5, NULL);
 
+    wifi_init();
+    lcd_set_blk(1);
+
+    cam_buffer = (uint16_t *)heap_caps_malloc(sizeof(uint16_t)*(320 * 240), MALLOC_CAP_SPIRAM);
+    lcd_cam_buffer = (cam_color16_t *)heap_caps_malloc(sizeof(cam_color16_t)*(240 * 240), MALLOC_CAP_SPIRAM);
+    uint16_t tmp;
+    uint16_t *p;
+    rgb_sw_t rgb_val;
     camera_hw_init();
     while(1) {
         take_fram_lock();
-        printf("frame ok\n");
-        udp_trans(fbuf, 320*240*2);
+        // printf("frame ok\n");
+        p = (uint16_t *)fbuf;
+        // for(int i = 0; i < 320*240; i++) {
+        //     // rgb_val.val = p[i];
+        //     // tmp = rgb_val.r;
+        //     rgb_val.r = 0;//(p[i] >> 8) & 0x1f;
+        //     rgb_val.g = 0;//(p[i] >> 5) & 0x3f;
+        //     rgb_val.b = 0x1f;
+        //     p[i] = rgb_val.val;
+        // }
+        for (int i = 0; i < 320 * 240; i++) {
+            cam_buffer[i] = 0x1f;
+        }
+        camera_trans((uint8_t *)cam_buffer, 320*240*2);
         give_fram_lock();
+        vTaskDelay(1000 / portTICK_PERIOD_MS);
     }
 }
 
