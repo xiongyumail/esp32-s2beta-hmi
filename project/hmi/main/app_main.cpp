@@ -287,25 +287,27 @@ static void mpuTask(void*)
     mpud::raw_axes_t rawAccel, rawGyro;
     // Reading Loop
     while (true) {
-        MPU.motion(&rawAccel, &rawGyro);  // read both in one shot
-        // Calculate tilt angle
-        // range: (roll[-180,180]  pitch[-90,90]  yaw[-180,180])
-        constexpr double kRadToDeg = 57.2957795131;
-        constexpr float kDeltaTime = 1.f / kSampleRate;
-        float gyroRoll             = roll + mpud::math::gyroDegPerSec(rawGyro.x, kGyroFS) * kDeltaTime;
-        float gyroPitch            = pitch + mpud::math::gyroDegPerSec(rawGyro.y, kGyroFS) * kDeltaTime;
-        float gyroYaw              = yaw + mpud::math::gyroDegPerSec(rawGyro.z, kGyroFS) * kDeltaTime;
-        float accelRoll            = atan2(-rawAccel.x, rawAccel.z) * kRadToDeg;
-        float accelPitch = atan2(rawAccel.y, sqrt(rawAccel.x * rawAccel.x + rawAccel.z * rawAccel.z)) * kRadToDeg;
-        // Fusion
-        roll  = gyroRoll * 0.95f + accelRoll * 0.05f;
-        pitch = gyroPitch * 0.95f + accelPitch * 0.05f;
-        yaw   = gyroYaw;
-        // correct yaw
-        if (yaw > 180.f)
-            yaw -= 360.f;
-        else if (yaw < -180.f)
-            yaw += 360.f;
+        if (GUI_PAGE_MOTION == gui_get_page()) {
+            MPU.motion(&rawAccel, &rawGyro);  // read both in one shot
+            // Calculate tilt angle
+            // range: (roll[-180,180]  pitch[-90,90]  yaw[-180,180])
+            constexpr double kRadToDeg = 57.2957795131;
+            constexpr float kDeltaTime = 1.f / kSampleRate;
+            float gyroRoll             = roll + mpud::math::gyroDegPerSec(rawGyro.x, kGyroFS) * kDeltaTime;
+            float gyroPitch            = pitch + mpud::math::gyroDegPerSec(rawGyro.y, kGyroFS) * kDeltaTime;
+            float gyroYaw              = yaw + mpud::math::gyroDegPerSec(rawGyro.z, kGyroFS) * kDeltaTime;
+            float accelRoll            = atan2(-rawAccel.x, rawAccel.z) * kRadToDeg;
+            float accelPitch = atan2(rawAccel.y, sqrt(rawAccel.x * rawAccel.x + rawAccel.z * rawAccel.z)) * kRadToDeg;
+            // Fusion
+            roll  = gyroRoll * 0.95f + accelRoll * 0.05f;
+            pitch = gyroPitch * 0.95f + accelPitch * 0.05f;
+            yaw   = gyroYaw;
+            // correct yaw
+            if (yaw > 180.f)
+                yaw -= 360.f;
+            else if (yaw < -180.f)
+                yaw += 360.f;
+        }
         vTaskDelay(100 / portTICK_PERIOD_MS);
     }
     vTaskDelete(nullptr);
@@ -322,10 +324,14 @@ static void printTask(void*)
     vTaskDelay(2000 / portTICK_PERIOD_MS);
     while (true) {
         // printf("Pitch: %+6.1f \t Roll: %+6.1f \t Yaw: %+6.1f \n", pitch, roll, yaw);
-        
-        iot_hts221_get_temperature(hts221, &temperature);
-        iot_hts221_get_humidity(hts221, &humidity);
-        iot_bh1750_get_data(bh1750, &light);
+        if (GUI_PAGE_MONITOR == gui_get_page()) {
+            iot_hts221_get_temperature(hts221, &temperature);
+            iot_hts221_get_humidity(hts221, &humidity);
+            iot_bh1750_get_data(bh1750, &light);
+            gui_set_sensor((float)(temperature/10), (float)(humidity/10), light, 1000);
+        } else if (GUI_PAGE_MOTION == gui_get_page()) {
+            gui_set_motion(pitch, roll, yaw, 1000);
+        }
 
         time(&now);
         localtime_r(&now, &timeinfo);
@@ -339,8 +345,6 @@ static void printTask(void*)
         last_timeinfo = timeinfo;
         // printf("temperature: %f\n humidity: %f\r\n", (float)(temperature/10), (float)(humidity/10));
         // printf("light: %f\n", light);
-        gui_set_sensor((float)(temperature/10), (float)(humidity/10), light, 1000);
-        gui_set_motion(pitch, roll, yaw, 1000);
         vTaskDelay(500 / portTICK_PERIOD_MS);
     }
 }

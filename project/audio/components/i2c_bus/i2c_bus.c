@@ -75,6 +75,7 @@ esp_err_t i2c_bus_init()
     conf.sda_pullup_en = 1;
     conf.scl_io_num = 5;
     conf.scl_pullup_en = 1;
+    conf.master.clk_speed = 100000;
     res = i2c_driver_install(i2c_master_port, conf.mode, 0, 0, 0);
     res |= i2c_param_config(i2c_master_port, &conf);
     

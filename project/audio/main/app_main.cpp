@@ -65,8 +65,9 @@ static void wifi_init(void)
 }
 
 uint8_t mac[16];
-
-extern "C" void app_main() {
+#include "es8311.h"
+extern "C" void app_main() 
+{
     ESP_LOGI(TAG, "[APP] Startup..");
     ESP_LOGI(TAG, "[APP] Free memory: %d bytes", esp_get_free_heap_size());
     ESP_LOGI(TAG, "[APP] IDF version: %s", esp_get_idf_version());
@@ -135,17 +136,17 @@ extern "C" void app_main() {
     }
     ESP_LOGI(TAG, "Read from file: '%s'", line);
 
-    tcpip_adapter_init();
-    ESP_ERROR_CHECK( esp_event_loop_create_default() );
+    // tcpip_adapter_init();
+    // ESP_ERROR_CHECK( esp_event_loop_create_default() );
 
-    ESP_LOGI(TAG, "Initializing SNTP");
-    sntp_setoperatingmode(SNTP_OPMODE_POLL);
-    sntp_setservername(0, "pool.ntp.org");
-    sntp_init();
-    setenv("TZ", "CST-8", 1);
-    tzset();
+    // ESP_LOGI(TAG, "Initializing SNTP");
+    // sntp_setoperatingmode(SNTP_OPMODE_POLL);
+    // sntp_setservername(0, "pool.ntp.org");
+    // sntp_init();
+    // setenv("TZ", "CST-8", 1);
+    // tzset();
 
-    wifi_init();
+    // wifi_init();
 
     esp_read_mac(mac, ESP_MAC_WIFI_STA);
     ESP_ERROR_CHECK(i2c_bus_init());

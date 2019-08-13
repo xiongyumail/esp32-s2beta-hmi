@@ -58,17 +58,6 @@ static lv_chart_series_t * ser_roll;
 static lv_chart_series_t * ser_yaw;
 static lv_obj_t * motion_table;
 
-typedef enum {
-    GUI_PAGE_LED = 0,
-    GUI_PAGE_MONITOR,
-    GUI_PAGE_MOTION,
-    GUI_PAGE_TOUCH,
-    GUI_PAGE_AUDIO,
-    GUI_PAGE_CAMERA,
-    GUI_PAGE_TERMINAL,
-    GUI_PAGE_INFO
-} gui_page_t;
-
 static gui_page_t gui_page = GUI_PAGE_LED;
 
 static gui_sensor_t gui_sensor;
@@ -1068,6 +1057,11 @@ int gui_set_motion(float pitch, float roll, float yaw, int ticks_wait)
     gui_sensor.roll = roll;
     gui_sensor.yaw = yaw;
     return gui_event_send(GUI_SENSOR_EVENT, (void *)&gui_sensor, ticks_wait);
+}
+
+gui_page_t gui_get_page()
+{
+    return gui_page;
 }
 
 void gui_init(lv_theme_t * th)
