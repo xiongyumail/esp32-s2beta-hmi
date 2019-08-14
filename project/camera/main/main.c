@@ -24,6 +24,7 @@
 #include "lcd.h"
 #include "gui.h"
 #include "encoder.h"
+#include "WS2812B.h"
 
 static const char *TAG = "main";
 
@@ -138,9 +139,9 @@ static void IRAM_ATTR lv_disp_flush1(lv_disp_drv_t * disp_drv, const lv_area_t *
 {
     uint32_t len = (sizeof(uint16_t) * ((area->y2 - area->y1 + 1)*(area->x2 - area->x1 + 1)));
 
-    lcd_select(0);
-    lcd_set_index(area->x1, area->y1, area->x2, area->y2);
-    lcd_write_data((uint16_t *)color_p, len);
+    // lcd_select(0);
+    // lcd_set_index(area->x1, area->y1, area->x2, area->y2);
+    // lcd_write_data((uint16_t *)color_p, len);
 
     lv_disp_flush_ready(disp_drv);
 }
@@ -149,9 +150,10 @@ static void IRAM_ATTR lv_disp_flush2(lv_disp_drv_t * disp_drv, const lv_area_t *
 {
     uint32_t len = (sizeof(uint16_t) * ((area->y2 - area->y1 + 1)*(area->x2 - area->x1 + 1)));
 
-    lcd_select(1);
+    lcd_take(1);
     lcd_set_index(area->x1, area->y1, area->x2, area->y2);
     lcd_write_data((uint16_t *)color_p, len);
+    lcd_give();
 
     lv_disp_flush_ready(disp_drv);
 }
@@ -258,30 +260,33 @@ typedef union
 
 cam_color16_t *lcd_cam_buffer = NULL;
 
-uint16_t *cam_buffer = NULL;
-
-void camera_trans(uint8_t* src, uint32_t fb_size)
+void IRAM_ATTR camera_trans(uint8_t* src, uint32_t fb_size)
 {
     int x, y;
     int i = 0;
     uint16_t data;
-    lcd_select(0);
     for (y = 0; y < 240; y++) {
+        i += 40 * 2;
         for (x = 0; x < 240; x++) {
-            data = (src[i+0] << 8) | (src[i+1]);
-            // lcd_cam_buffer[y*240 + x].ch.red = 0;//(src[i+0] << 5) & 0x1f;
-            // lcd_cam_buffer[y*240 + x].ch.green_h = 0;//(src[i+1] >> 5) & 0x07;
-            // lcd_cam_buffer[y*240 + x].ch.green_l = 0;//(src[i+1] << 1) & 0x07;
-            // lcd_cam_buffer[y*240 + x].ch.blue = (src[i+1]) & 0x1f;
-            lcd_cam_buffer[y*240 + x].full = data;
+            // data = (src[i+0] << 8) | (src[i+1]);
+            lcd_cam_buffer[y*240 + x].ch.red = ((src[i+1] << 2) | (src[i+0] >> 6)) & 0x1f;
+            lcd_cam_buffer[y*240 + x].ch.green_h = (src[i+1] >> 5) & 0x07;
+            lcd_cam_buffer[y*240 + x].ch.green_l = ((src[i+1] >> 2)) & 0x07;
+            lcd_cam_buffer[y*240 + x].ch.blue = (src[i+0]) & 0x1f;
+            // lcd_cam_buffer[y*240 + x].full = data;
             // printf("%x\n", data);
             i += 2;
         }
-        i += 80 * 2;
+        i += 40 * 2;
     }
+    lcd_take(0);
     lcd_set_index(0, 0, 239, 239);
     lcd_write_data(lcd_cam_buffer, 240*240*2);
-    
+    lcd_give();
+    lcd_take(1);
+    lcd_set_index(0, 0, 239, 134);
+    lcd_write_data(lcd_cam_buffer, 240*135*2);
+    lcd_give();
 }
 
 
@@ -314,37 +319,27 @@ void app_main()
     setenv("TZ", "CST-8", 1);
     tzset();
 
-    lcd_init();
-    // xTaskCreate(gui_task, "gui_task", 4096, NULL, 5, NULL);
+    // lcd_init();
+    xTaskCreate(gui_task, "gui_task", 4096, NULL, 5, NULL);
     // xTaskCreate(sensor_task, "sensor_task", 2048, NULL, 5, NULL);
 
-    wifi_init();
+    vTaskDelay(1000 / portTICK_PERIOD_MS);
+    // wifi_init();
     lcd_set_blk(1);
 
-    cam_buffer = (uint16_t *)heap_caps_malloc(sizeof(uint16_t)*(320 * 240), MALLOC_CAP_SPIRAM);
-    lcd_cam_buffer = (cam_color16_t *)heap_caps_malloc(sizeof(cam_color16_t)*(240 * 240), MALLOC_CAP_SPIRAM);
+    WS2812B_init(RMT_CHANNEL_0, GPIO_NUM_4, 1);
+    wsRGB_t rgb = {0x0, 0x0, 0x0};
+    WS2812B_setLeds(&rgb, 1);
+
+    lcd_cam_buffer = (cam_color16_t *)heap_caps_malloc(sizeof(cam_color16_t)*(240 * 240), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     uint16_t tmp;
     uint16_t *p;
     rgb_sw_t rgb_val;
     camera_hw_init();
     while(1) {
         take_fram_lock();
-        // printf("frame ok\n");
-        p = (uint16_t *)fbuf;
-        // for(int i = 0; i < 320*240; i++) {
-        //     // rgb_val.val = p[i];
-        //     // tmp = rgb_val.r;
-        //     rgb_val.r = 0;//(p[i] >> 8) & 0x1f;
-        //     rgb_val.g = 0;//(p[i] >> 5) & 0x3f;
-        //     rgb_val.b = 0x1f;
-        //     p[i] = rgb_val.val;
-        // }
-        for (int i = 0; i < 320 * 240; i++) {
-            cam_buffer[i] = 0x1f;
-        }
-        camera_trans((uint8_t *)cam_buffer, 320*240*2);
+        camera_trans(fbuf, 320*240*2);
         give_fram_lock();
-        vTaskDelay(1000 / portTICK_PERIOD_MS);
     }
 }
 

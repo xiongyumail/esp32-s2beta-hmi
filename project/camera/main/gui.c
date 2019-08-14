@@ -4,6 +4,7 @@
 #include "freertos/task.h"
 #include "freertos/queue.h"
 #include "gui.h"
+#include "WS2812B.h"
 
 typedef struct {
     int event;
@@ -303,6 +304,95 @@ int gui_set_source_value(char type, float value, uint8_t color_mask, int ticks_w
 }
 
 static lv_group_t * encoder_group;
+static wsRGB_t led_rgb;
+
+static void slider_event_handler(lv_obj_t * obj, lv_event_t event)
+{
+    if(event == LV_EVENT_VALUE_CHANGED) {
+        printf("Value: %d, %c\n", lv_slider_get_value(obj), (char)obj->user_data);
+        switch ((char)obj->user_data) {
+            case 'R': {
+                led_rgb.r = lv_slider_get_value(obj) * 2.55;
+            }
+            break;
+
+            case 'G': {
+                led_rgb.g = lv_slider_get_value(obj) * 2.55;
+            }
+            break;
+
+            case 'B': {
+                led_rgb.b = lv_slider_get_value(obj) * 2.55;
+            }
+            break;
+        }
+        WS2812B_setLeds(&led_rgb, 1);
+    }
+}
+
+static void body_page_led(lv_obj_t * parent)
+{
+    /*Create styles*/
+    static lv_style_t style_bg;
+    static lv_style_t style_indic;
+    static lv_style_t style_knob;
+
+    lv_style_copy(&style_bg, &lv_style_pretty);
+    style_bg.body.main_color =  LV_COLOR_BLACK;
+    style_bg.body.grad_color =  LV_COLOR_GRAY;
+    style_bg.body.radius = LV_RADIUS_CIRCLE;
+    style_bg.body.border.color = LV_COLOR_WHITE;
+
+    lv_style_copy(&style_indic, &lv_style_pretty_color);
+    style_indic.body.radius = LV_RADIUS_CIRCLE;
+    style_indic.body.shadow.width = 8;
+    style_indic.body.shadow.color = style_indic.body.main_color;
+    style_indic.body.padding.left = 3;
+    style_indic.body.padding.right = 3;
+    style_indic.body.padding.top = 3;
+    style_indic.body.padding.bottom = 3;
+
+    lv_style_copy(&style_knob, &lv_style_pretty);
+    style_knob.body.radius = LV_RADIUS_CIRCLE;
+    style_knob.body.opa = LV_OPA_70;
+    style_knob.body.padding.top = 10 ;
+    style_knob.body.padding.bottom = 10 ;
+
+    /*Create a slider*/
+    lv_obj_t * slider_red = lv_slider_create(parent, NULL);
+    slider_red->user_data = (void *)'R';
+    lv_slider_set_style(slider_red, LV_SLIDER_STYLE_BG, &style_bg);
+    lv_slider_set_style(slider_red, LV_SLIDER_STYLE_INDIC,&style_indic);
+    lv_slider_set_style(slider_red, LV_SLIDER_STYLE_KNOB, &style_knob);
+    lv_obj_align(slider_red, NULL, LV_ALIGN_IN_TOP_MID, 0, 0);
+    lv_obj_set_event_cb(slider_red, slider_event_handler);
+    lv_group_add_obj(encoder_group, slider_red);
+    // lv_obj_t * slider_label = lv_label_create(slider_red, NULL);
+    // lv_label_set_text(slider_label, "R");
+    // lv_obj_set_auto_realign(slider_label, true);
+    // lv_obj_align(slider_label, slider_red, LV_ALIGN_OUT_BOTTOM_MID, 0, 10);
+    // lv_obj_set_pos(slider_label, 20, 0);
+
+    /*Create a slider*/
+    lv_obj_t * slider_green = lv_slider_create(parent, NULL);
+    slider_green->user_data = (void *)'G';
+    lv_slider_set_style(slider_green, LV_SLIDER_STYLE_BG, &style_bg);
+    lv_slider_set_style(slider_green, LV_SLIDER_STYLE_INDIC,&style_indic);
+    lv_slider_set_style(slider_green, LV_SLIDER_STYLE_KNOB, &style_knob);
+    lv_obj_align(slider_green, NULL, LV_ALIGN_CENTER, 0, 0);
+    lv_obj_set_event_cb(slider_green, slider_event_handler);
+    lv_group_add_obj(encoder_group, slider_green);
+
+    /*Create a slider*/
+    lv_obj_t * slider_blue = lv_slider_create(parent, NULL);
+    slider_blue->user_data = (void *)'B';
+    lv_slider_set_style(slider_blue, LV_SLIDER_STYLE_BG, &style_bg);
+    lv_slider_set_style(slider_blue, LV_SLIDER_STYLE_INDIC,&style_indic);
+    lv_slider_set_style(slider_blue, LV_SLIDER_STYLE_KNOB, &style_knob);
+    lv_obj_align(slider_blue, NULL, LV_ALIGN_IN_BOTTOM_MID, 0, 0);
+    lv_obj_set_event_cb(slider_blue, slider_event_handler);
+    lv_group_add_obj(encoder_group, slider_blue);
+}
 
 void gui_init(lv_disp_t **disp_array, lv_indev_t **indev_array, lv_theme_t * th)
 {
@@ -323,13 +413,7 @@ void gui_init(lv_disp_t **disp_array, lv_indev_t **indev_array, lv_theme_t * th)
     gui_set_source_value('W', 0, 16, portMAX_DELAY);
 
     encoder_group = lv_group_create();
-    // lv_group_set_focus_cb(encoder_group, group_focus_cb);
     lv_indev_set_group(indev[0], encoder_group);
-    lv_obj_t * spinbox = lv_spinbox_create(lv_disp_get_scr_act(disp[1]), NULL);
-    // lv_obj_set_event_cb(obj, general_event_handler);
-    lv_spinbox_set_digit_format(spinbox, 5, 2);
-    lv_spinbox_step_prev(spinbox);
-    lv_obj_set_width(spinbox, 240);
-    lv_obj_align(spinbox, NULL, LV_ALIGN_CENTER, 0, 0);
-    lv_group_add_obj(encoder_group, spinbox);
+
+    body_page_led(lv_disp_get_scr_act(disp[1]));
 }

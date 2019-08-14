@@ -1,4 +1,4 @@
-15926463925718207
+15913943115355207
 Battery
 BatteryHolder_Bulgin_BX0036_1xC
 Bulgin Battery Holder, BX0036, Battery Type C (https://www.bulgin.com/products/pub/media/bulgin/data/Battery_holders.pdf)
@@ -44022,20 +44022,6 @@ single digit 7 segemnt red/green LED
 0
 10
 10
-ESP32
-ESP32-WROOM
-
-
-0
-39
-39
-ESP32
-QFN-48-1EP_6x6mm_P0.4mm_EP4.3x4.3mm
-QFN, 48 Pin (https://www.espressif.com/sites/default/files/documentation/esp32_datasheet_en.pdf#page=38), generated with kicad-footprint-generator ipc_dfn_qfn_generator.py
-QFN DFN_QFN
-0
-58
-49
 Ferrite_THT
 LairdTech_28C0236-0JW-10
 Ferrite, vertical, LairdTech 28C0236-0JW-10, https://assets.lairdtech.com/home/brandworld/files/28C0236-0JW-10.pdf, JW Miller core https://www.bourns.com/products/magnetic-products/j.w.-miller-through-hole-ferrite-beads-emi-filters
@@ -47977,20 +47963,6 @@ solder jumper open
 0
 5
 3
-LCD
-IPS1.3'240x240
-
-
-0
-12
-12
-LCD
-IPS1.14'240x135
-
-
-0
-13
-13
 LED_SMD
 LED-APA102-2020
 http://www.led-color.com/upload/201604/APA102-2020%20SMD%20LED.pdf
@@ -49062,27 +49034,6 @@ logo
 0
 0
 0
-MISC
-JS-910B-4MM
-
-
-0
-1
-1
-MISC
-PCB_BTN
-
-
-0
-2
-2
-MISC
-PWR_BTN
-
-
-0
-1
-1
 Module
 A20_OLINUXINO_LIME2
 A20 Olinuxino LIME2, 1.2GHz, 512-1024MB RAM, Micro-SD, NAND or eMMC, 1000Mbit Ethernet
@@ -70930,13 +70881,6 @@ transformer flyback
 0
 10
 10
-USB
-UJ31-Ch-3-SMT-TR
-
-
-0
-28
-28
 Valve
 Valve_ECC-83-1
 Valve ECC-83-1 round pins

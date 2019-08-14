@@ -3,15 +3,14 @@
 #include <math.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
+#include "freertos/semphr.h"
 #include "freertos/task.h"
-// #include "driver/i2s.h"
 #include "esp_system.h"
 #include "soc/i2s_struct.h"
 #include "soc/i2s_reg.h"
 #include"soc/apb_ctrl_reg.h"
 #include "soc/system_reg.h"
 #include "driver/ledc.h"
-
 #include "esp32s2beta/rom/lldesc.h"
 
 #define BIT_MODE   8
@@ -40,7 +39,7 @@
 #define FRAM_BUF_SIZE (FRAM_WIDTH*PIX_SIZE*FRAM_BUF_LINE)
 #define DMA_NODE_CNT  (10)
 
-#define USE_FRAM_LOCK    (0)
+#define USE_FRAM_LOCK    (1)
 #define FRAM_BUFER_DEBUG (0)
 
 typedef struct {
@@ -53,6 +52,8 @@ typedef struct {
     int loop_cnt;
     int fram_id;
     xQueueHandle queue;
+    SemaphoreHandle_t disp_mux;
+    SemaphoreHandle_t update_mux;
     camera_fram_t *pfram[DMA_NODE_CNT];
     uint8_t *pbuf;
 } camera_obj_t;
@@ -186,7 +187,7 @@ static void i2s_camera_config(void)
     I2S0.conf1.val = 0;
     I2S0.conf1.rx_pcm_bypass = 1;
     I2S0.sample_rate_conf.val = 0;
-    I2S0.sample_rate_conf.rx_bck_div_num = 12;
+    I2S0.sample_rate_conf.rx_bck_div_num = 4;
     I2S0.timing.val = 0;
     I2S0.conf2.val = 0;
     I2S0.fifo_conf.val = 0;
@@ -290,6 +291,17 @@ static camera_obj_t* camera_dma_create(void)
         }
         memset(camera_obj->pfram[i], 0, sizeof(camera_fram_t));
     }
+    camera_obj->disp_mux = xSemaphoreCreateBinary();
+    if(!camera_obj->disp_mux) {
+        printf("disp mux create fail\n");
+        abort();  
+    }
+    camera_obj->update_mux = xSemaphoreCreateBinary();
+    if(!camera_obj->update_mux) {
+        printf("update mux create fail\n");
+        abort();  
+    }
+    xSemaphoreGive(camera_obj->update_mux);
     camera_obj->queue = xQueueCreate(10, sizeof(int));
     if(!camera_obj->queue) {
         printf("queue create fail\n");
@@ -324,6 +336,7 @@ typedef enum {
 fram_sta_t fram_status = FRAM_UNLOCK;
 #endif
 
+int acc = 0;
 
 //Copy fram from DMA buffer to fram buffer
 static void camera_fram_copy_task(void *param)
@@ -331,49 +344,37 @@ static void camera_fram_copy_task(void *param)
     camera_obj_t* obj = (camera_obj_t*)param;
     int id = 0; // fram id: 0~240
     while(1) {
-        xQueueReceive(obj->queue, (void *)&id, (portTickType)portMAX_DELAY);
-#if USE_FRAM_LOCK
-        if(fram_status == FRAM_LOCK) {
-            continue;
-        }
-        if (fram_status != FRAM_IN_PROGRESS ) {
-            if (obj->pfram[id]->fram_id == 0) {
+        if (xSemaphoreTake(obj->update_mux, (portTickType)10) != pdTRUE) {
+            xQueueReceive(obj->queue, (void *)&id, (portTickType)portMAX_DELAY);
+        } else {
+            while(1) {
+                xQueueReceive(obj->queue, (void *)&id, (portTickType)portMAX_DELAY);
+                if (fram_status != FRAM_IN_PROGRESS && obj->pfram[id]->fram_id != 0) {
+                    continue;
+                }
                 fram_status = FRAM_IN_PROGRESS;
-            } else {
-                fram_status = FRAM_IN_PROGRESS;
-                continue;
+                // printf("%d %d\n", obj->pfram[id]->fram_id, obj->pfram[id+1]->fram_id);
+                memcpy(obj->pbuf + obj->pfram[id]->fram_id*FRAM_BUF_SIZE, obj->pfram[id]->buf, FRAM_BUF_SIZE);
+                memcpy(obj->pbuf + obj->pfram[id+1]->fram_id*FRAM_BUF_SIZE, obj->pfram[id+1]->buf, FRAM_BUF_SIZE);
+                if(obj->pfram[id+1]->fram_id == 39) {
+                    xSemaphoreGive(obj->disp_mux);
+                    fram_status = FRAM_LOCK;
+                    break;
+                }    
             }
         }
-#endif
 
-#if !FRAM_BUFER_DEBUG
-        memcpy(obj->pbuf + obj->pfram[id]->fram_id*FRAM_BUF_SIZE, obj->pfram[id]->buf, FRAM_BUF_SIZE);
-        memcpy(obj->pbuf + obj->pfram[id+1]->fram_id*FRAM_BUF_SIZE, obj->pfram[id+1]->buf, FRAM_BUF_SIZE);
-#else    
-        memset(obj->pbuf + obj->pfram[id]->fram_id*FRAM_BUF_SIZE, 0, FRAM_BUF_SIZE);
-        memset(obj->pbuf + obj->pfram[id+1]->fram_id*FRAM_BUF_SIZE, 0x33, FRAM_BUF_SIZE);
-#endif
-
-#if USE_FRAM_LOCK
-        if(obj->pfram[id+1]->fram_id == 39) {
-            fram_status = FRAM_LOCK;
-        }
-#endif
     }
 }
 
 void take_fram_lock(void)
 {
-#if USE_FRAM_LOCK
-    while(fram_status != FRAM_LOCK) vTaskDelay(10/portTICK_PERIOD_MS);
-#endif
+    xSemaphoreTake(cam_obj->disp_mux, (portTickType)portMAX_DELAY);
 }
 
 void give_fram_lock(void)
 {
-#if USE_FRAM_LOCK
-    fram_status = FRAM_UNLOCK;
-#endif
+    xSemaphoreGive(cam_obj->update_mux);
 }
 
 uint8_t * i2s_camera_attach(void)

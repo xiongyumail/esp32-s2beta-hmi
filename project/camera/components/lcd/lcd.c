@@ -9,11 +9,12 @@
 
 static spi_device_handle_t spi;
 static SemaphoreHandle_t lcd_write_mux = NULL;
+static SemaphoreHandle_t lcd_mux = NULL;
 static uint8_t lcd_dc_state = 0;
 static uint8_t lcd_num = 0;
 
 static uint16_t *lcd_buffer = NULL;
-#define LCD_BUFFER_SIZE (16 * 1024)
+#define LCD_BUFFER_SIZE (64 * 1024)
 
 #define SPI_BURST_MAX_LEN (LCD_BUFFER_SIZE)  // Maximum pixel data transferred at a time
 
@@ -53,8 +54,9 @@ static void lcd_delay_ms(uint32_t time)
     vTaskDelay(time / portTICK_RATE_MS);
 }
 
-void lcd_select(uint8_t num)
+void lcd_take(uint8_t num)
 {
+    xSemaphoreTake(lcd_mux, portMAX_DELAY);
     xSemaphoreTake(lcd_write_mux, portMAX_DELAY);
     switch (num) {
         case 0: {
@@ -72,6 +74,11 @@ void lcd_select(uint8_t num)
         break;
     }
     xSemaphoreGive(lcd_write_mux);
+}
+
+void lcd_give()
+{
+    xSemaphoreGive(lcd_mux);
 }
 
 static void lcd_write_cmd(uint8_t data)
@@ -111,10 +118,18 @@ void lcd_rst()
 
 static void lcd_240x240_config()
 {
-    lcd_select(0);
+    lcd_take(0);
 
     lcd_write_cmd(0x36); // MADCTL (36h): Memory Data Access Control
+#if (LCD0_HORIZONTAL == 0)
     lcd_write_byte(0x00);
+#elif (LCD0_HORIZONTAL == 1)
+    lcd_write_byte(0xC0);
+#elif (LCD0_HORIZONTAL == 2)
+    lcd_write_byte(0x70);
+#elif (LCD0_HORIZONTAL == 3)
+    lcd_write_byte(0xA0);
+#endif
 
     lcd_write_cmd(0x3A);  // COLMOD (3Ah): Interface Pixel Format 
     lcd_write_byte(0x05);
@@ -188,14 +203,24 @@ static void lcd_240x240_config()
     lcd_write_cmd(0x11); // SLPOUT (11h): Sleep Out 
 
     lcd_write_cmd(0x29); // DISPON (29h): Display On
+
+    lcd_give();
 }
 
 static void lcd_240x135_config()
 {
-    lcd_select(1);
+    lcd_take(1);
 
     lcd_write_cmd(0x36); // MADCTL (36h): Memory Data Access Control
+#if (LCD1_HORIZONTAL == 0)
+    lcd_write_byte(0x00);
+#elif (LCD1_HORIZONTAL == 1)
+    lcd_write_byte(0xC0);
+#elif (LCD1_HORIZONTAL == 2)
+    lcd_write_byte(0x70);
+#elif (LCD1_HORIZONTAL == 3)
     lcd_write_byte(0xA0);
+#endif
 
     lcd_write_cmd(0x3A);  // COLMOD (3Ah): Interface Pixel Format 
     lcd_write_byte(0x05);
@@ -269,6 +294,8 @@ static void lcd_240x135_config()
     lcd_write_cmd(0x11); // SLPOUT (11h): Sleep Out 
 
     lcd_write_cmd(0x29); // DISPON (29h): Display On
+
+    lcd_give();
 }
 
 void lcd_init()
@@ -283,7 +310,7 @@ void lcd_init()
         .max_transfer_sz = SPI_BURST_MAX_LEN
     };
     spi_device_interface_config_t devcfg = {
-        .clock_speed_hz = 40*1000*1000,           //Clock out at 10 MHz
+        .clock_speed_hz = 80*1000*1000,           //Clock out at 10 MHz
         .mode = 0,                                //SPI mode 0
         .spics_io_num = -1,                       //CS pin
         .queue_size = 1,                          //We want to be able to queue 1 transactions at a time
@@ -314,6 +341,7 @@ void lcd_init()
     lcd_set_cs1(1);
     
     lcd_write_mux = xSemaphoreCreateMutex();
+    lcd_mux = xSemaphoreCreateMutex();
 
     lcd_rst();//lcd_rst before LCD Init.
     lcd_delay_ms(100);
@@ -326,21 +354,37 @@ void lcd_init()
 
 void lcd_set_index(uint16_t x_start, uint16_t y_start, uint16_t x_end, uint16_t y_end)
 {
-    uint16_t data;
+    uint16_t start_pos, end_pos;
     switch (lcd_num) {
         case 0: {
             lcd_write_cmd(0x2a);    // CASET (2Ah): Column Address Set 
             // Must write byte than byte
-            lcd_write_byte(0x00);
-            lcd_write_byte(x_start);
-            lcd_write_byte(0x00);
-            lcd_write_byte(x_end);
+#if (LCD0_HORIZONTAL == 3)
+            start_pos = x_start + 80;
+            end_pos = x_end + 80;
+#else
+            start_pos = x_start;
+            end_pos = x_end;
+#endif
+            lcd_write_byte(start_pos >> 8);
+            lcd_write_byte(start_pos & 0xFF);
+            lcd_write_byte(end_pos >> 8);
+            lcd_write_byte(end_pos & 0xFF);
 
-            lcd_write_cmd(0x2b);    // RASET (2Bh): Row Address Set 
-            lcd_write_byte(0x00);
-            lcd_write_byte(y_start);
-            lcd_write_byte(0x00);
-            lcd_write_byte(y_end);    
+            lcd_write_cmd(0x2b);    // RASET (2Bh): Row Address Set
+#if (LCD0_HORIZONTAL == 1)
+            start_pos = x_start + 80;
+            end_pos = x_end + 80;
+#else
+            start_pos = y_start;
+            end_pos = y_end;
+#endif
+            start_pos = y_start;
+            end_pos = y_end; 
+            lcd_write_byte(start_pos >> 8);
+            lcd_write_byte(start_pos & 0xFF);
+            lcd_write_byte(end_pos >> 8);
+            lcd_write_byte(end_pos & 0xFF); 
             lcd_write_cmd(0x2c);    // RAMWR (2Ch): Memory Write 
         }
         break;
@@ -348,16 +392,42 @@ void lcd_set_index(uint16_t x_start, uint16_t y_start, uint16_t x_end, uint16_t 
         case 1: {
             lcd_write_cmd(0x2a);    // CASET (2Ah): Column Address Set 
             // Must write byte than byte
-            lcd_write_byte((x_start + 40) >> 8);
-            lcd_write_byte((x_start + 40) & 0xFF);
-            lcd_write_byte((x_end + 40) >> 8);
-            lcd_write_byte((x_end + 40) & 0xFF);
+#if (LCD1_HORIZONTAL == 0)
+            start_pos = x_start + 52;
+            end_pos = x_end + 52;
+#elif (LCD1_HORIZONTAL == 1)
+            start_pos = x_start + 53;
+            end_pos = x_end + 53;
+#elif (LCD1_HORIZONTAL == 2)
+            start_pos = x_start + 40;
+            end_pos = x_end + 40;
+#elif (LCD1_HORIZONTAL == 3)
+            start_pos = x_start + 40;
+            end_pos = x_end + 40;
+#endif
+            lcd_write_byte(start_pos >> 8);
+            lcd_write_byte(start_pos & 0xFF);
+            lcd_write_byte(end_pos >> 8);
+            lcd_write_byte(end_pos & 0xFF);
 
             lcd_write_cmd(0x2b);    // RASET (2Bh): Row Address Set 
-            lcd_write_byte((y_start + 52) >> 8);
-            lcd_write_byte((y_start + 52) & 0xFF);
-            lcd_write_byte((y_end + 52) >> 8);
-            lcd_write_byte((y_end + 52) & 0xFF);   
+#if (LCD1_HORIZONTAL == 0)
+            start_pos = y_start + 40;
+            end_pos = y_end + 40;
+#elif (LCD1_HORIZONTAL == 1)
+            start_pos = y_start + 40;
+            end_pos = y_end + 40;
+#elif (LCD1_HORIZONTAL == 2)
+            start_pos = y_start + 53;
+            end_pos = y_end + 53;
+#elif (LCD1_HORIZONTAL == 3)
+            start_pos = y_start + 52;
+            end_pos = y_end + 52;
+#endif
+            lcd_write_byte(start_pos >> 8);
+            lcd_write_byte(start_pos & 0xFF);
+            lcd_write_byte(end_pos >> 8);
+            lcd_write_byte(end_pos & 0xFF);  
             lcd_write_cmd(0x2c);    // RAMWR (2Ch): Memory Write 
         }
         break;

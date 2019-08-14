@@ -17,6 +17,9 @@ extern "C" {
 
 #define LCD_PIN_BCKL 40
 
+#define LCD0_HORIZONTAL 3
+#define LCD1_HORIZONTAL 2
+
 void inline lcd_set_res(uint8_t state)
 {
     gpio_set_level(LCD_PIN_RST, state);
@@ -49,7 +52,9 @@ void lcd_init();
 
 void lcd_write_data(uint16_t *data, size_t len);
 
-void lcd_select(uint8_t num);
+void lcd_take(uint8_t num);
+
+void lcd_give();
 
 void lcd_set_index(uint16_t x_start, uint16_t y_start, uint16_t x_end, uint16_t y_end);
 
