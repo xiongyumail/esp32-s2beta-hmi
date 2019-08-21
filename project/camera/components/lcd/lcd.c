@@ -14,7 +14,7 @@ static uint8_t lcd_dc_state = 0;
 static uint8_t lcd_num = 0;
 
 static uint16_t *lcd_buffer = NULL;
-#define LCD_BUFFER_SIZE (64 * 1024)
+#define LCD_BUFFER_SIZE (32 * 1024)
 
 #define SPI_BURST_MAX_LEN (LCD_BUFFER_SIZE)  // Maximum pixel data transferred at a time
 

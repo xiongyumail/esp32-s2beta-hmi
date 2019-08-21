@@ -17,8 +17,8 @@ extern "C" {
 
 #define LCD_PIN_BCKL 40
 
-#define LCD0_HORIZONTAL 3
-#define LCD1_HORIZONTAL 2
+#define LCD0_HORIZONTAL 2
+#define LCD1_HORIZONTAL 0
 
 void inline lcd_set_res(uint8_t state)
 {
