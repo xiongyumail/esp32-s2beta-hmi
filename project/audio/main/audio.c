@@ -14,6 +14,7 @@
 #include "es8311.h"
 #include "touch.h"
 #include "mp3dec.h"
+#include "WS2812B.h"
 
 static const char *TAG = "AUDIO";
 
@@ -207,43 +208,59 @@ static void audio_task(void *arg)
     }
 }
 
+wsRGB_t rgb = {0x0, 0x0, 0x0};
+
 static void audio_control_task(void *arg)
 {
     uint32_t touch_status = 0, last_touch_status = 0;
     uint32_t volume = 50;
     es8311_set_voice_volume(volume);
+    
     while (1) {
         touch_get_status(&touch_status);
         if (touch_status != last_touch_status) {
             switch (touch_status) {
                 case 0x4: {
                     volume+=5;
+                    rgb.g = 0xFF;
                     es8311_set_voice_volume(volume);
                 }
                 break;
                 case 0x200: {
                     volume-=5;
+                    rgb.g = 0xFF;
                     es8311_set_voice_volume(volume);
                 }
                 break;
 
                 case 0x100: {
+                    rgb.r = 0xFF;
                     play_flag = play_flag ? AUDIO_STOP : AUDIO_PLAY;
                 }
                 break;
 
                 case 0x800: {
+                    rgb.b = 0xFF;
                     play_flag = AUDIO_LAST;
                 }
                 break;
 
                 case 0x2000: {
+                    rgb.b = 0xFF;
                     play_flag = AUDIO_NEXT;
+                }
+                break;
+
+                default: {
+                    rgb.r = 0x00;
+                    rgb.g = 0x00;
+                    rgb.b = 0x00;
                 }
                 break;
             }
             last_touch_status = touch_status;
         }
+        WS2812B_setLeds(&rgb, 1);
         vTaskDelay(100 / portTICK_RATE_MS);
     }
 }

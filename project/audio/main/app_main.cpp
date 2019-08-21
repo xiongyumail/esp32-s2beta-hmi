@@ -21,6 +21,7 @@
 #include "i2c_bus.h"
 #include "touch.h"
 #include "audio.h"
+#include "WS2812B.h"
 
 static const char *TAG = "main";
 
@@ -150,6 +151,10 @@ extern "C" void app_main()
 
     esp_read_mac(mac, ESP_MAC_WIFI_STA);
     ESP_ERROR_CHECK(i2c_bus_init());
+
+    WS2812B_init(RMT_CHANNEL_0, GPIO_NUM_4, 1);
+    wsRGB_t rgb = {0x0, 0xF, 0x0};
+    WS2812B_setLeds(&rgb, 1);
 
     audio_init();
 
