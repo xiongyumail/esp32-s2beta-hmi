@@ -21,7 +21,6 @@ typedef struct {
 #define GUI_TIME_EVENT 2
 #define GUI_SENSOR_EVENT 3
 #define GUI_MOTION_EVENT 3
-#define GUI_CAMERA_EVENT 4
 
 typedef struct {
     float temp;
@@ -485,31 +484,11 @@ static void body_page_led(lv_obj_t * parent)
     color_picker_table_update(color_picker_hsv);
 }
 
-static lv_obj_t * camera_canvas = NULL;
-static lv_color_t *camera_buffer[2] = {NULL, NULL};
-static uint8_t camera_buffer_index = 0;
-
-static void camera_event_cb(lv_obj_t * obj, lv_event_t event)
-{
-    struct timeval tv;
-    static int last_time, time;
-    if(event == LV_EVENT_REFRESH) {
-        gettimeofday(&tv, NULL);
-        time = (long long)tv.tv_sec * 1000 + tv.tv_usec / 1000;
-        printf("time: %d ms\n", (time - last_time));
-        lv_canvas_set_buffer(obj, camera_buffer[camera_buffer_index], 320, 240, LV_IMG_CF_TRUE_COLOR);
-        camera_buffer_index = camera_buffer_index ? 0 : 1;
-        last_time = time;
-    }
-}
-
 static void body_page_camera(lv_obj_t * parent)
 {
-    if (camera_buffer[0] == NULL) {
-        camera_buffer[0] = (lv_color_t *)heap_caps_malloc(LV_CANVAS_BUF_SIZE_TRUE_COLOR(320, 240), MALLOC_CAP_SPIRAM);
-    }
-    if (camera_buffer[1] == NULL) {
-        camera_buffer[1] = (lv_color_t *)heap_caps_malloc(LV_CANVAS_BUF_SIZE_TRUE_COLOR(320, 240), MALLOC_CAP_SPIRAM);
+    static lv_color_t *canvas_buffer = NULL;
+    if (canvas_buffer == NULL) {
+        canvas_buffer = (lv_color_t *)heap_caps_malloc(LV_CANVAS_BUF_SIZE_TRUE_COLOR(400, 400), MALLOC_CAP_SPIRAM);
     }
 
     lv_obj_t * h = lv_cont_create(parent, NULL);
@@ -520,18 +499,11 @@ static void body_page_camera(lv_obj_t * parent)
     static lv_style_t style;
     lv_style_copy(&style, &lv_style_plain);
     style.text.color = LV_COLOR_RED;
-    camera_canvas = lv_canvas_create(h, NULL);
-    lv_canvas_set_buffer(camera_canvas, camera_buffer[camera_buffer_index], 320, 240, LV_IMG_CF_TRUE_COLOR);
-    lv_canvas_fill_bg(camera_canvas, LV_COLOR_BLACK);
+    lv_obj_t * canvas = lv_canvas_create(h, NULL);
+    lv_canvas_set_buffer(canvas, canvas_buffer, 400, 400, LV_IMG_CF_TRUE_COLOR);
+    lv_canvas_fill_bg(canvas, LV_COLOR_BLACK);
     // lv_canvas_set_px(canvas, 10, 10, LV_COLOR_RED);
-    // if (camera_buffer_index == 0) {
-    //     lv_canvas_draw_text(camera_canvas, 0, 160, 240, &style, "NO SIGNAL(0)!", LV_LABEL_ALIGN_CENTER);
-    // } else {
-    //     lv_canvas_draw_text(camera_canvas, 0, 160, 240, &style, "NO SIGNAL(1)!", LV_LABEL_ALIGN_CENTER);
-    // }
-    lv_obj_set_event_cb(camera_canvas, camera_event_cb);
-    
-    camera_buffer_index = camera_buffer_index ? 0 : 1;
+    lv_canvas_draw_text(canvas, 0, 200, 400, &style, "NO SIGNAL!", LV_LABEL_ALIGN_CENTER);
 }
 
 lv_obj_t * terminal_ta;
@@ -1001,12 +973,6 @@ static void gui_task(lv_task_t * arg)
                 sensor_update((gui_sensor_t *)e.arg);
             }
             break;
-
-            case GUI_CAMERA_EVENT: {
-                // camera_update();
-                lv_event_send(camera_canvas, LV_EVENT_REFRESH, NULL);
-            }
-            break;
         }
     }
 }
@@ -1091,16 +1057,6 @@ int gui_set_motion(float pitch, float roll, float yaw, int ticks_wait)
     gui_sensor.roll = roll;
     gui_sensor.yaw = yaw;
     return gui_event_send(GUI_SENSOR_EVENT, (void *)&gui_sensor, ticks_wait);
-}
-
-int gui_set_camera(lv_color_t *buffer, int ticks_wait) 
-{
-    if (camera_buffer[0] == NULL || camera_buffer[1] == NULL) {
-        return -1;
-    }
-
-    memcpy(camera_buffer[camera_buffer_index], buffer, sizeof(lv_color_t) * 320 * 240);
-    return gui_event_send(GUI_CAMERA_EVENT, NULL, ticks_wait);
 }
 
 gui_page_t gui_get_page()

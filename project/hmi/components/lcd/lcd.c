@@ -30,7 +30,7 @@ lcd_pin_def_t lcd_bus = {
 static lldesc_t __dma[250] = {0};
 
 static uint16_t *lcd_buffer = NULL;
-#define LCD_BUFFER_SIZE (8 * 1024)
+#define LCD_BUFFER_SIZE (16 * 1024)
 
 static void i2s_lcd_config(void)
 {
