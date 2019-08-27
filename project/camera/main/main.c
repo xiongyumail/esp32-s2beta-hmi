@@ -273,6 +273,8 @@ static camera_config_t camera_config = {
     .fb_count = 1 //if more than one, i2s runs in continuous mode. Use only with JPEG
 };
 
+wsRGB_t rgb = {0x0, 0x0, 0x00};
+
 esp_err_t camera_init()
 {
     //initialize the camera
@@ -292,6 +294,10 @@ esp_err_t camera_capture()
     if (!fb) {
         ESP_LOGE(TAG, "Camera Capture Failed");
         cam_flag = 0;
+        rgb.r = 0xFF;
+        rgb.b = 0x00;
+        rgb.g = 0x00;
+        WS2812B_setLeds(&rgb, 1);
         return ESP_FAIL;
     }
     cam_flag = 1;
@@ -320,6 +326,10 @@ void app_main()
     setenv("TZ", "CST-8", 1);
     tzset();
 
+    WS2812B_init(RMT_CHANNEL_0, GPIO_NUM_4, 1);
+    rgb.r = 0x0F;
+    WS2812B_setLeds(&rgb, 1);
+
     camera_init();
     // lcd_init();
     xTaskCreate(gui_task, "gui_task", 4096, NULL, 5, NULL);
@@ -329,13 +339,13 @@ void app_main()
     // wifi_init();
     lcd_set_blk(1);
 
-    WS2812B_init(RMT_CHANNEL_0, GPIO_NUM_4, 1);
-    wsRGB_t rgb = {0x0, 0x0, 0x0};
-    WS2812B_setLeds(&rgb, 1);
-
     lcd_cam_buffer = (uint16_t *)heap_caps_malloc(sizeof(uint16_t)*(240 * 240), MALLOC_CAP_SPIRAM);
 
     vTaskDelay(1000 / portTICK_PERIOD_MS);
+    rgb.r = 0x0F;
+    rgb.b = 0x0F;
+    rgb.g = 0x0F;
+    WS2812B_setLeds(&rgb, 1);
     while(1) {
         // printf("heap: %d/%d\n", heap_caps_get_free_size(MALLOC_CAP_INTERNAL), esp_get_free_heap_size());
         camera_capture();
