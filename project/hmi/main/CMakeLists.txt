@@ -1,6 +1,5 @@
 set(COMPONENT_SRCS "app_main.cpp" 
                    "gui.c" 
-                   "seg_font.c" 
                    "my_symbol.c" 
                    "logo.c"
                    "espressif.c"

@@ -197,7 +197,7 @@ void IRAM_ATTR camera_trans(uint8_t* src, uint32_t fb_size)
     for (y = 239; y >= 0; y--) {
         i += 40 * 2;
         for (x = 239; x >= 0; x--) {
-            lcd_cam_buffer[y*240 + x] = (src[i+1] << 8) | (src[i+0]);
+            lcd_cam_buffer[y*240 + x] = (src[i+0] << 8) | (src[i+1]);
             i += 2;
         }
         i += 40 * 2;
@@ -336,8 +336,9 @@ void app_main()
     // // xTaskCreate(sensor_task, "sensor_task", 2048, NULL, 5, NULL);
 
     vTaskDelay(500 / portTICK_PERIOD_MS);
-    // wifi_init();
     lcd_set_blk(1);
+    // wifi_init();
+    
 
     lcd_cam_buffer = (uint16_t *)heap_caps_malloc(sizeof(uint16_t)*(240 * 240), MALLOC_CAP_SPIRAM);
 

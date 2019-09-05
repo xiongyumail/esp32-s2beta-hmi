@@ -1,6 +1,3 @@
-[submodule "tools/esp-idf"]
-	path = tools/esp-idf
-	url = https://gitlab.espressif.cn:6688/idf/esp-idf.git
 [submodule "project/components/littlevgl/lvgl"]
 	path = project/hmi/components/littlevgl/lvgl
 	url = https://github.com/littlevgl/lvgl.git
@@ -13,3 +10,6 @@
 [submodule "project/pcb/kicad-lib"]
 	path = project/pcb/kicad-lib
 	url = https://github.com/xiongyumail/kicad-lib
+[submodule "tools/esp-idf"]
+	path = tools/esp-idf
+	url = https://github.com/espressif/esp-idf.git
