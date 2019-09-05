@@ -1,5 +1,5 @@
 set(COMPONENT_SRCS
-  driver/camera_32s2.c
+  driver/camera_32s2_tmp.c
   driver/sccb.c
   driver/sensor.c
   driver/twi.c

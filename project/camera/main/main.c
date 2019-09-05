@@ -197,7 +197,7 @@ void IRAM_ATTR camera_trans(uint8_t* src, uint32_t fb_size)
     for (y = 239; y >= 0; y--) {
         i += 40 * 2;
         for (x = 239; x >= 0; x--) {
-            lcd_cam_buffer[y*240 + x] = (src[i+0] << 8) | (src[i+1]);
+            lcd_cam_buffer[y*240 + x] = (src[i+1] << 8) | (src[i+0]);
             i += 2;
         }
         i += 40 * 2;
@@ -206,19 +206,6 @@ void IRAM_ATTR camera_trans(uint8_t* src, uint32_t fb_size)
     lcd_set_index(0, 0, 239, 239);
     lcd_write_data(lcd_cam_buffer, 240*240*2);
     lcd_give();
-    // i = 0;
-    // for (y = 239; y >= 0; y--) {
-    //     i += 90 * 2;
-    //     for (x = 134; x >= 0; x--) {
-    //         lcd_cam_buffer[y*135 + x] = (src[i+1] << 8) | (src[i+0]);
-    //         i += 2;
-    //     }
-    //     i += 95 * 2;
-    // }
-    // lcd_take(1);
-    // lcd_set_index(0, 40, 134, 239);
-    // lcd_write_data(lcd_cam_buffer, 200*135*2);
-    // lcd_give();
 }
 
 #include "esp_camera.h"
@@ -269,7 +256,7 @@ static camera_config_t camera_config = {
     .pixel_format = PIXFORMAT_RGB565,//YUV422,GRAYSCALE,RGB565,JPEG
     .frame_size = FRAMESIZE_QVGA,//QQVGA-QXGA Do not use sizes above QVGA when not JPEG
 
-    .jpeg_quality = 12, //0-63 lower number means higher quality
+    .jpeg_quality = 0, //0-63 lower number means higher quality
     .fb_count = 1 //if more than one, i2s runs in continuous mode. Use only with JPEG
 };
 
@@ -283,6 +270,16 @@ esp_err_t camera_init()
         ESP_LOGE(TAG, "Camera Init Failed");
         return err;
     }
+    sensor_t * sensor = esp_camera_sensor_get();
+    // sensor->set_aec2(sensor, false);
+    // sensor->set_awb_gain(sensor, false);
+    sensor->set_hmirror(sensor, true);
+    sensor->set_contrast(sensor, 3);
+    sensor->set_saturation(sensor, 1);
+    // sensor->set_sharpness(sensor, 5);
+    sensor->set_brightness(sensor, 1);
+    // sensor->set_special_effect(sensor, 2);
+    // sensor->set_wb_mode(sensor, 0);
     ESP_LOGI(TAG, "Camera Init Done");
     return ESP_OK;
 }
@@ -348,7 +345,6 @@ void app_main()
     rgb.g = 0x0F;
     WS2812B_setLeds(&rgb, 1);
     while(1) {
-        // printf("heap: %d/%d\n", heap_caps_get_free_size(MALLOC_CAP_INTERNAL), esp_get_free_heap_size());
         camera_capture();
     }
 }

@@ -44,13 +44,14 @@
 #include "ov3660.h"
 #endif
 
+typedef void (*dma_filter_t)(const dma_elem_t* src, lldesc_t* dma_desc, uint8_t* dst);
 
 typedef enum {
-    CAMERA_NONE = 0,
-    CAMERA_UNKNOWN = 1,
-    CAMERA_OV7725 = 7725,
-    CAMERA_OV2640 = 2640,
-    CAMERA_OV3660 = 3660,
+	CAMERA_NONE = 0,
+	CAMERA_UNKNOWN = 1,
+	CAMERA_OV7725 = 7725,
+	CAMERA_OV2640 = 2640,
+	CAMERA_OV3660 = 3660,
 } camera_model_t;
 
 typedef struct camera_fb_s {
@@ -65,40 +66,38 @@ typedef struct camera_fb_s {
     struct camera_fb_s * next;
 } camera_fb_int_t;
 
-typedef void (*dma_filter_t)(int dma_buf_id, int frame_id, camera_fb_int_t *fb);
-
 typedef struct {
-    camera_config_t config;
-    sensor_t sensor;
+	camera_config_t config;
+	sensor_t sensor;
 
-    camera_fb_int_t *fb;
-    size_t fb_size;
-    size_t data_size;
+	camera_fb_int_t *fb;
+	size_t fb_size;
+	size_t data_size;
 
-    size_t width;
-    size_t height;
-    size_t in_bytes_per_pixel;
-    size_t fb_bytes_per_pixel;
+	size_t width;
+	size_t height;
+	size_t in_bytes_per_pixel;
+	size_t fb_bytes_per_pixel;
 
-    size_t dma_received_count;
-    size_t dma_filtered_count;
-    size_t dma_per_line;
-    size_t dma_buf_width;
-    size_t dma_sample_count;
-    int    dma_desc_inc_cnt;
-    size_t dma_desc_cur;
-    int dma_suc_eof_max;
-    lldesc_t *dma_desc;
-    dma_elem_t **dma_buf;
+	size_t dma_received_count;
+	size_t dma_filtered_count;
+	size_t dma_per_line;
+	size_t dma_buf_width;
+	size_t dma_sample_count;
 
-    dma_filter_t dma_filter;
-    intr_handle_t i2s_intr_handle;
-    QueueHandle_t data_ready;
-    QueueHandle_t fb_in;
-    QueueHandle_t fb_out;
-    TaskHandle_t dma_filter_task_fd;
+	lldesc_t *dma_desc;
+	dma_elem_t **dma_buf;
+	size_t dma_desc_count;
+	size_t dma_desc_cur;
+
+	dma_filter_t dma_filter;
+	intr_handle_t i2s_intr_handle;
+	QueueHandle_t data_ready;
+	QueueHandle_t fb_in;
+	QueueHandle_t fb_out;
+
+	TaskHandle_t dma_filter_task;
 } camera_state_t;
-
 
 camera_state_t* s_state = NULL;
 
@@ -110,13 +109,6 @@ typedef union {
     };
     uint32_t va;
 } dma_fram_item_t;
-
-typedef enum {
-    FRAME_BEGIN,
-    FRAME_OK,
-    FRAM_DONE,
-    FRAME_ERR,
-} frame_stat_t;
 
 #define REG_PID        0x0A
 #define REG_VER        0x0B
@@ -158,43 +150,41 @@ static inline void IRAM_ATTR i2s_conf_reset()
     I2S0.conf.rx_reset = 0;
     I2S0.conf.rx_fifo_reset = 1;
     I2S0.conf.rx_fifo_reset = 0;
-    I2S0.conf2.cam_sync_fifo_reset = 1;
-    I2S0.conf2.cam_sync_fifo_reset = 0;    
     while ( GET_PERI_REG_MASK(I2S_CONF_REG(0), I2S_RX_FIFO_RESET_ST_M) );
 }
 
-static int  fram_id = 0;
 
-static void IRAM_ATTR signal_dma_buf_received(void)
+static void IRAM_ATTR i2s_isr(void *param)
 {
+	static int tagel = 0x1;
+	static int  fram_id = 0;
+    static int dma_buf_id = 0;
+	typeof(I2S0.int_st) int_st = I2S0.int_st;
+	I2S0.int_clr.val = int_st.val;
+	portBASE_TYPE high_priority_task_awoken = 0;
     dma_fram_item_t fram_item;
-    fram_item.dma_buf_id = s_state->dma_desc_cur;
-    fram_item.fram_id = fram_id;
-    portBASE_TYPE high_priority_task_awoken = 0;
-    //For JPEG mode
-    if (I2S0.rx_eof_num < 10) {
-        I2S0.conf.rx_start = 0;
-        I2S0.rx_eof_num = s_state->dma_sample_count;
-        fram_item.fram_sta =  FRAM_DONE;
-        //end of the frame
-        fram_id = (s_state->dma_suc_eof_max - s_state->dma_desc_inc_cnt);
-    } else {
-        fram_item.fram_sta =  FRAME_OK;
-    }
-    // If the queue is full, the frame will be lost, reset the queue
-    if (xQueueSendFromISR(s_state->data_ready, (void *)&fram_item, &high_priority_task_awoken) != pdTRUE) {
-        xQueueReset(s_state->data_ready);
-        //Queue is full but a new frame begins, reset the queue and receive this frame.
-        if (fram_id == 0) {
-            fram_item.fram_sta =  FRAME_OK;
-            xQueueSendFromISR(s_state->data_ready, (void *)&fram_item, &high_priority_task_awoken);
-        }
-    }
-    fram_id = (fram_id == s_state->dma_suc_eof_max - s_state->dma_desc_inc_cnt) ? 0 : fram_id + s_state->dma_desc_inc_cnt;
-    s_state->dma_desc_cur = (s_state->dma_desc_cur == DMA_DESC_CNT - s_state->dma_desc_inc_cnt) ? 0 : s_state->dma_desc_cur + s_state->dma_desc_inc_cnt;
-    if (high_priority_task_awoken == pdTRUE) {
-        portYIELD_FROM_ISR();
-    }
+
+	if (int_st.in_suc_eof) {
+		// ets_printf("i2s isr\n");
+		// gpio_set_level(34, tagel);
+		// tagel ^= 0x1;
+        fram_item.dma_buf_id = dma_buf_id;
+        fram_item.fram_id = fram_id;
+        // ets_printf("%d  %d\n", fram_item.dma_buf_id , fram_item.fram_id);
+		xQueueSendFromISR(s_state->data_ready, (void *)&fram_item, &high_priority_task_awoken);
+        fram_id += 2;
+        dma_buf_id += 2;
+		if(dma_buf_id == DMA_DESC_CNT) dma_buf_id = 0;
+        if(fram_id == 40) fram_id = 0;
+	}
+	if (high_priority_task_awoken == pdTRUE) {
+		portYIELD_FROM_ISR();
+	}
+}
+
+static void IRAM_ATTR vsync_isr(void* arg)
+{
+   ets_printf("vsync isr\n");
 }
 
 static void IRAM_ATTR vsync_intr_disable(void)
@@ -205,33 +195,6 @@ static void IRAM_ATTR vsync_intr_disable(void)
 static void vsync_intr_enable(void)
 {
     gpio_set_intr_type(s_state->config.pin_vsync, GPIO_INTR_NEGEDGE);
-}
-
-static void IRAM_ATTR i2s_isr(void *param)
-{
-    typeof(I2S0.int_st) int_st = I2S0.int_st;
-    I2S0.int_clr.val = ~0;
-    if (int_st.in_suc_eof) {
-        signal_dma_buf_received();
-    }
-    return;
-    //Jpeg_mode
-    if (I2S0.conf.rx_start == 0) {
-        i2s_conf_reset();
-        I2S0.in_link.addr = (uint32_t) &s_state->dma_desc[s_state->dma_desc_cur];
-        I2S0.in_link.start = 1;
-        I2S0.conf.rx_start = 1;
-        vsync_intr_enable();
-   }
-}
-
-static void IRAM_ATTR vsync_isr(void* arg)
-{
-    if (I2S0.conf.rx_start && fram_id) {
-        I2S0.rx_eof_num = 1;
-        I2S0.in_link.start = 0;
-        vsync_intr_disable();
-    }
 }
 
 static void IRAM_ATTR i2s_start_bus()
@@ -255,7 +218,7 @@ static void IRAM_ATTR i2s_start_bus()
 
 static int i2s_run(void)
 {
-    for (int i = 0; i < DMA_DESC_CNT; ++i) {
+	for (int i = 0; i < s_state->dma_desc_count; ++i) {
         lldesc_t* d = &s_state->dma_desc[i];
         ESP_LOGV(TAG, "DMA desc %2d: %u %u %u %u %u %u %p %p",
                  i, d->length, d->size, d->offset, d->eof, d->sosf, d->owner, d->buf, d->qe.stqe_next);
@@ -272,12 +235,8 @@ static int i2s_run(void)
         }
     }
     esp_intr_enable(s_state->i2s_intr_handle);
-    camera_fb_int_t *fb_tmp = s_state->fb;
-    for (int i = 0; i < s_state->config.fb_count; i++) {
-        xQueueSend(s_state->fb_in, &fb_tmp, portMAX_DELAY);
-        fb_tmp = fb_tmp->next;
-    }
     i2s_conf_reset();
+    // gpio_matrix_in(0x38, I2S0I_H_ENABLE_IDX, false);
     i2s_start_bus();
     return 0;
 }
@@ -311,13 +270,10 @@ static void i2s_init(void)
             rtc_gpio_deinit(pins[i]);
         }
         conf.pin_bit_mask |= (1LL << pins[i]);
-    }
-
+	}
+    
     PIN_FUNC_SELECT(GPIO_PIN_MUX_REG[34], PIN_FUNC_GPIO);
     gpio_set_direction(34, GPIO_MODE_OUTPUT);
-
-    PIN_FUNC_SELECT(GPIO_PIN_MUX_REG[36], PIN_FUNC_GPIO);
-    gpio_set_direction(36, GPIO_MODE_OUTPUT);
 
     gpio_config(&conf);
 
@@ -336,8 +292,6 @@ static void i2s_init(void)
     gpio_matrix_in(config->pin_d5, I2S0I_DATA_IN13_IDX, false);
     gpio_matrix_in(config->pin_d6, I2S0I_DATA_IN14_IDX, false);
     gpio_matrix_in(config->pin_d7, I2S0I_DATA_IN15_IDX, false);
-    uint32_t ws_pin_reg = (GPIO_PIN0_REG+config->pin_pclk*4);
-    REG_WRITE(ws_pin_reg, REG_READ(ws_pin_reg) | 0x12);
 
     // Enable and configure I2S peripheral
     periph_module_enable(PERIPH_I2S0_MODULE);
@@ -360,7 +314,7 @@ static void i2s_init(void)
     I2S0.fifo_conf.val = 0;
     I2S0.fifo_conf.rx_fifo_mod_force_en = 1;
     I2S0.fifo_conf.rx_data_num = 32;
-    // I2S0.conf.rx_right_first = 1;
+    I2S0.conf.rx_right_first = 1;
     I2S0.conf.rx_dma_equal = 1;
     I2S0.conf2.lcd_en = 1;
     I2S0.conf2.camera_en = 1;
@@ -368,35 +322,37 @@ static void i2s_init(void)
     I2S0.conf2.i_v_sync_filter_en = 1;
     I2S0.conf2.i_v_sync_filter_thres = 1;
     I2S0.sample_rate_conf.rx_bits_mod = 8;
+    I2S0.fifo_conf.rx_fifo_mod = 1;
     I2S0.conf_chan.rx_chan_mod = 1;
     i2s_conf_reset();
     I2S0.conf2.cam_sync_fifo_reset = 1;
     I2S0.int_ena.val = 0;
     I2S0.int_clr.val = ~0;
-    I2S0.timing.rx_ws_in_delay = 3;
 
     // Allocate I2S interrupt, keep it disabled
-    esp_intr_alloc(ETS_I2S0_INTR_SOURCE, ESP_INTR_FLAG_IRAM, i2s_isr, NULL, &s_state->i2s_intr_handle);
+   esp_intr_alloc(ETS_I2S0_INTR_SOURCE, ESP_INTR_FLAG_IRAM, i2s_isr, NULL, &s_state->i2s_intr_handle);
 }
-
-int fb = 0;
 
 camera_fb_t* esp_camera_fb_get(void)
 {
-    if (s_state == NULL) {
-        return NULL;
-    }
-    if (!I2S0.conf.rx_start) {
+	if (s_state == NULL) {
+		return NULL;
+	}
+	if (!I2S0.conf.rx_start) {
         camera_fb_int_t * fb_tmp = s_state->fb;
-        if (i2s_run() != 0) {
-            return NULL;
+        for (int i = 0; i < s_state->config.fb_count; i++) {
+            xQueueSend(s_state->fb_in, &fb_tmp, portMAX_DELAY);
+            fb_tmp = fb_tmp->next; 
         }
-    }
-    camera_fb_int_t * fb = NULL;
-    if (s_state->fb_out) {
-        xQueueReceive(s_state->fb_out, &fb, portMAX_DELAY);
-    }
-    return (camera_fb_t*)fb;
+		if (i2s_run() != 0) {
+			return NULL;
+		}
+	}
+	camera_fb_int_t * fb = NULL;
+	if (s_state->fb_out) {
+		xQueueReceive(s_state->fb_out, &fb, portMAX_DELAY);
+	}
+	return (camera_fb_t*)fb;
 }
 
 void esp_camera_fb_return(camera_fb_t * fb)
@@ -422,84 +378,82 @@ typedef enum {
 
 static void dma_filter_task(void *param)
 {
-    // Check if it is the expected frame number
-    int expect_id = 0;
+	// Check if it is the expected frame number
+	int expect_id = 0;
     dma_fram_item_t fram_item;
-    camera_fb_int_t * fb = NULL;
-    //frame status
-    fram_buf_sta_t fb_sta = FRAM_BUF_IDLE;
-    while (1) {
-        xQueueReceive(s_state->fb_in, &fb, portMAX_DELAY);
-        while (1) {
-            //wait dma fram buf
+	camera_fb_int_t * fb = NULL;
+	//frame status
+	fram_buf_sta_t fb_sta = FRAM_BUF_IDLE;
+	while (1) {
+		xQueueReceive(s_state->fb_in, &fb, portMAX_DELAY);
+        while(1) {
+        	//wait dma fram buf
             xQueueReceive(s_state->data_ready, (void *)&fram_item, portMAX_DELAY);
-            if ( fb_sta == FRAM_BUF_IDLE  && fram_item.fram_id != 0) {
-                continue;
+            //Not the start of a frame
+            if( fb_sta == FRAM_BUF_IDLE  && fram_item.fram_id != 0) {
+            	continue;
             }
             // If the queue is full, we may lose some frames
-            if (expect_id != fram_item.fram_id) {
-                expect_id = 0;
-                if (fram_item.fram_id != 0) {
-                    fb_sta = FRAM_BUF_IDLE;
-                    ESP_LOGD(TAG, "Bad fram\n");
-                    continue;
-                }
-                //A new frame start
+            if(expect_id != fram_item.fram_id) {
+                ESP_LOGD(TAG, "Bad fram\n");
+            	expect_id = 0;
+            	fb_sta = FRAM_BUF_IDLE;
+            	continue;
             }
             fb_sta = FRAM_BUF_IN_PROGRESS;
-            //DMA filter
-            (*s_state->dma_filter)(fram_item.dma_buf_id, fram_item.fram_id, fb);
-            expect_id += s_state->dma_desc_inc_cnt;
-            if ((fram_item.fram_id == s_state->dma_suc_eof_max - s_state->dma_desc_inc_cnt) || fram_item.fram_sta == FRAM_DONE) {
-                expect_id = 0;
-                fb_sta = FRAM_BUF_IDLE;
-                xQueueSend(s_state->fb_out, &fb, portMAX_DELAY);
-                break;
+            memcpy(fb->buf+fram_item.fram_id*s_state->dma_buf_width, s_state->dma_buf[fram_item.dma_buf_id], s_state->dma_buf_width);
+            memcpy(fb->buf+(fram_item.fram_id+1)*s_state->dma_buf_width, s_state->dma_buf[fram_item.dma_buf_id+1], s_state->dma_buf_width);
+            expect_id += 2;
+            if(fram_item.fram_id == 38) {
+            	expect_id = 0;
+            	fb_sta = FRAM_BUF_IDLE;
+            	xQueueSend(s_state->fb_out, &fb, portMAX_DELAY);
+            	break;
             }
-        }
-    }
+        }    
+	}
 }
 
 static esp_err_t dma_desc_init(void)
 {
-    size_t line_size = s_state->width * s_state->in_bytes_per_pixel;
-    size_t dma_per_line = ((DMA_BUF_MAX_SIZE / line_size) & 0xfe);
-    size_t buf_size = line_size * dma_per_line;
-    size_t dma_desc_count = DMA_DESC_CNT;
-    s_state->dma_buf_width = buf_size;
-    s_state->dma_per_line = dma_per_line;
-    s_state->dma_suc_eof_max = s_state->height / dma_per_line;
-    ESP_LOGD(TAG, "DMA buffer size: %d, DMA buffers per line: %d", buf_size, dma_per_line);
-    ESP_LOGD(TAG, "DMA buffer count: %d", dma_desc_count);
-    ESP_LOGD(TAG, "DMA buffer total: %d bytes", buf_size * dma_desc_count);
-    s_state->dma_buf = (dma_elem_t**) malloc(sizeof(dma_elem_t*) * dma_desc_count);
-    if (s_state->dma_buf == NULL) {
-        return ESP_ERR_NO_MEM;
-    }
-    s_state->dma_desc = (lldesc_t*) malloc(sizeof(lldesc_t) * dma_desc_count);
-    if (s_state->dma_desc == NULL) {
-        return ESP_ERR_NO_MEM;
-    }
-    memset(s_state->dma_desc, 0, sizeof(lldesc_t) * dma_desc_count);
-    for (int i = 0; i < dma_desc_count; ++i) {
-        ESP_LOGI(TAG, "Allocating DMA buffer #%d, size=%d", i, buf_size);
-        // dma_elem_t* buf = (dma_elem_t*) malloc(buf_size);
-        dma_elem_t* buf = (dma_elem_t*)heap_caps_calloc(buf_size, 1, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
-        if (buf == NULL) {
-            return ESP_ERR_NO_MEM;
-        }
-        s_state->dma_buf[i] = buf;
-        ESP_LOGI(TAG, "dma_buf[%d]=%p", i, buf);
+	size_t line_size = s_state->width * s_state->in_bytes_per_pixel;
+	size_t dma_per_line = ((DMA_BUF_MAX_SIZE / line_size) & 0xfe);
+	size_t buf_size = line_size * dma_per_line;
+	size_t dma_desc_count = DMA_DESC_CNT;
+	s_state->dma_buf_width = buf_size;
+	s_state->dma_per_line = dma_per_line;
+	s_state->dma_desc_count = dma_desc_count;
+	ESP_LOGD(TAG, "DMA buffer size: %d, DMA buffers per line: %d", buf_size, dma_per_line);
+	ESP_LOGD(TAG, "DMA buffer count: %d", dma_desc_count);
+	ESP_LOGD(TAG, "DMA buffer total: %d bytes", buf_size * dma_desc_count);
 
+	s_state->dma_buf = (dma_elem_t**) malloc(sizeof(dma_elem_t*) * dma_desc_count);
+	if (s_state->dma_buf == NULL) {
+		return ESP_ERR_NO_MEM;
+	}
+	s_state->dma_desc = (lldesc_t*) malloc(sizeof(lldesc_t) * dma_desc_count);
+	if (s_state->dma_desc == NULL) {
+		return ESP_ERR_NO_MEM;
+	}
+	memset(s_state->dma_desc, 0, sizeof(lldesc_t) * dma_desc_count);
+	for (int i = 0; i < dma_desc_count; ++i) {
+		ESP_LOGD(TAG, "Allocating DMA buffer #%d, size=%d", i, buf_size);
+		dma_elem_t* buf = (dma_elem_t*) malloc(buf_size);
+		if (buf == NULL) {
+			return ESP_ERR_NO_MEM;
+		}
+		s_state->dma_buf[i] = buf;
+		ESP_LOGV(TAG, "dma_buf[%d]=%p", i, buf);
+        
         s_state->dma_desc[i].size = buf_size;
         s_state->dma_desc[i].length = buf_size;
-        s_state->dma_desc[i].owner = 1;
-        s_state->dma_desc[i].buf = (uint8_t*)buf;
-        s_state->dma_desc[i].eof = 1;
-        s_state->dma_desc[i].empty = &s_state->dma_desc[(i + 1) % dma_desc_count];
-    }
-    s_state->dma_sample_count = buf_size * s_state->dma_desc_inc_cnt; //reduce the isr count
-    return ESP_OK;
+		s_state->dma_desc[i].owner = 1;
+		s_state->dma_desc[i].buf = (uint8_t*)buf;
+		s_state->dma_desc[i].eof = 1;
+		s_state->dma_desc[i].empty = &s_state->dma_desc[(i + 1) % dma_desc_count];
+	}
+	s_state->dma_sample_count = buf_size * 2; //reduce the isr count
+	return ESP_OK;
 }
 
 static void camera_fb_deinit(void)
@@ -519,7 +473,7 @@ static void camera_fb_deinit(void)
 static void dma_desc_deinit(void)
 {
     if (s_state->dma_buf) {
-        for (int i = 0; i < DMA_DESC_CNT; ++i) {
+        for (int i = 0; i < s_state->dma_desc_count; ++i) {
             free(s_state->dma_buf[i]);
         }
     }
@@ -553,7 +507,7 @@ static esp_err_t camera_fb_init(size_t count)
             ESP_LOGE(TAG, "Allocating %d KB frame buffer Failed", s_state->fb_size / 1024);
             goto fail;
         } else {
-            ESP_LOGI(TAG, "Allocating frame buffers-%d  at %p", i, _fb2->buf);
+            ESP_LOGI(TAG, "Allocating frame buffers-%d  at %p", i, _fb2->buf);    
         }
         memset(_fb2->buf, 0, _fb2->size);
         _fb2->next = _fb;
@@ -580,69 +534,6 @@ fail:
     return ESP_ERR_NO_MEM;
 }
 
-typedef union {
-    struct {
-        uint16_t gh: 3;
-        uint16_t r : 5;
-        uint16_t b: 5;
-        uint16_t gl: 3;
-    };
-    uint16_t val;
-} rgb_565_sw_t;
-
-typedef union {
-    struct {
-        uint16_t b: 5;
-        uint16_t g: 6;
-        uint16_t r : 5;
-    };
-    uint16_t val;
-} rgb_565_t;
-
-static void IRAM_ATTR dma_filter_rgb565(int dma_buf_id, int frame_id, camera_fb_int_t *fb)
-{
-    uint16_t *psrc = (uint16_t *)s_state->dma_buf[dma_buf_id];
-    uint16_t *pdst = s_state->fb->buf + frame_id * s_state->dma_per_line * s_state->fb_bytes_per_pixel * s_state->width;
-    for (int i = 0; i < s_state->dma_buf_width / 2; i++) {
-        pdst[i] = (psrc[i] << 8) | (psrc[i] >> 8);
-    }
-    psrc = (uint16_t *)s_state->dma_buf[dma_buf_id + 1];
-    pdst = s_state->fb->buf + (frame_id + 1) * s_state->dma_per_line * s_state->fb_bytes_per_pixel * s_state->width;
-    for (int i = 0; i < s_state->dma_buf_width / 2; i++) {
-        pdst[i] = (psrc[i] << 8) | (psrc[i] >> 8);
-    }
-}
-
-static void IRAM_ATTR dma_filter_rgb888(int dma_buf_id, int frame_id, camera_fb_int_t *fb)
-{
-    rgb_565_sw_t *rgb_sw = (rgb_565_sw_t *)s_state->dma_buf[dma_buf_id];
-    uint8_t *pdst = s_state->fb->buf + frame_id * s_state->dma_per_line * s_state->fb_bytes_per_pixel * s_state->width;
-    for (int i = 0; i < s_state->dma_buf_width / 2; i++) {
-        pdst[0] = (rgb_sw[i].b) << 3;
-        pdst[1] = ((rgb_sw[i].gh) << 5) | ((rgb_sw[i].gl) << 2);
-        pdst[2] = (rgb_sw[i].r << 3);
-        pdst += 3;
-    }
-    rgb_sw = (rgb_565_sw_t *)s_state->dma_buf[dma_buf_id];
-    pdst = s_state->fb->buf + (frame_id + 1) * s_state->dma_per_line * s_state->fb_bytes_per_pixel * s_state->width;
-    for (int i = 0; i < s_state->dma_buf_width / 2; i++) {
-        pdst[0] = (rgb_sw[i].b) << 3;
-        pdst[1] = ((rgb_sw[i].gh) << 5) | ((rgb_sw[i].gl) << 2);
-        pdst[2] = (rgb_sw[i].r << 3);
-        pdst += 3;
-    }
-}
-
-static void IRAM_ATTR dma_filter_jpeg(int dma_buf_id, int frame_id, camera_fb_int_t *fb)
-{
-    ets_printf("get  %d\n", s_state->dma_desc[dma_buf_id].length);
-    return;
-    uint16_t *psrc = (uint16_t *)s_state->dma_buf[dma_buf_id];
-    uint16_t *pdst = s_state->fb->buf + frame_id * 3840;
-    memcpy(pdst, psrc, s_state->dma_desc[dma_buf_id].length);
-    s_state->dma_desc[dma_buf_id].length = 0;
-}
-
 static esp_err_t camera_init(const camera_config_t* config)
 {
     if (!s_state) {
@@ -657,7 +548,6 @@ static esp_err_t camera_init(const camera_config_t* config)
     pixformat_t pix_format = (pixformat_t) config->pixel_format;
     s_state->width = resolution[frame_size][0];
     s_state->height = resolution[frame_size][1];
-    s_state->dma_desc_inc_cnt = 2;
     if (pix_format == PIXFORMAT_GRAYSCALE) {
         s_state->fb_size = s_state->width * s_state->height;
         if (s_state->sensor.id.PID == OV3660_PID) {
@@ -682,7 +572,6 @@ static esp_err_t camera_init(const camera_config_t* config)
         s_state->fb_bytes_per_pixel = 1;       // frame buffer stores Y8
     } else if (pix_format == PIXFORMAT_YUV422 || pix_format == PIXFORMAT_RGB565) {
         s_state->fb_size = s_state->width * s_state->height * 2;
-        s_state->dma_filter = &dma_filter_rgb565;
         if (is_hs_mode() && s_state->sensor.id.PID != OV7725_PID) {
             // s_state->sampling_mode = SM_0A00_0B00;
             // s_state->dma_filter = &dma_filter_yuyv_highspeed;
@@ -694,7 +583,13 @@ static esp_err_t camera_init(const camera_config_t* config)
         s_state->fb_bytes_per_pixel = 2;       // frame buffer stores YU/YV/RGB565
     } else if (pix_format == PIXFORMAT_RGB888) {
         s_state->fb_size = s_state->width * s_state->height * 3;
-        s_state->dma_filter = &dma_filter_rgb888;
+        if (is_hs_mode()) {
+            // s_state->sampling_mode = SM_0A00_0B00;
+            // s_state->dma_filter = &dma_filter_rgb888_highspeed;
+        } else {
+            // s_state->sampling_mode = SM_0A0B_0C0D;
+            // s_state->dma_filter = &dma_filter_rgb888;
+        }
         s_state->in_bytes_per_pixel = 2;       // camera sends RGB565
         s_state->fb_bytes_per_pixel = 3;       // frame buffer stores RGB888
     } else if (pix_format == PIXFORMAT_JPEG) {
@@ -715,9 +610,8 @@ static esp_err_t camera_init(const camera_config_t* config)
         (*s_state->sensor.set_quality)(&s_state->sensor, qp);
         s_state->in_bytes_per_pixel = 2;
         s_state->fb_bytes_per_pixel = 2;
-        s_state->dma_desc_inc_cnt = 1;
         s_state->fb_size = (s_state->width * s_state->height * s_state->fb_bytes_per_pixel) / compression_ratio_bound;
-        s_state->dma_filter = &dma_filter_jpeg;
+        // s_state->dma_filter = &dma_filter_jpeg;
         // s_state->sampling_mode = SM_0A00_0B00;
     } else {
         ESP_LOGE(TAG, "Requested format is not supported");
@@ -744,7 +638,7 @@ static esp_err_t camera_init(const camera_config_t* config)
         ESP_LOGE(TAG, "Failed to allocate frame buffer");
         goto fail;
     }
-    s_state->data_ready = xQueueCreate(DMA_DESC_CNT - 1, sizeof(dma_fram_item_t));
+    s_state->data_ready = xQueueCreate(DMA_DESC_CNT, sizeof(dma_fram_item_t));
     if (s_state->data_ready == NULL) {
         ESP_LOGE(TAG, "Failed to dma queue");
         err = ESP_ERR_NO_MEM;
@@ -758,22 +652,23 @@ static esp_err_t camera_init(const camera_config_t* config)
         goto fail;
     }
 
-    if (!xTaskCreate(&dma_filter_task, "dma_filter", 4096, NULL, 10, &s_state->dma_filter_task_fd))
+    if (!xTaskCreate(&dma_filter_task, "dma_filter", 4096, NULL, 10, &s_state->dma_filter_task))
     {
         ESP_LOGE(TAG, "Failed to create DMA filter task");
         err = ESP_ERR_NO_MEM;
         goto fail;
     }
-    if (pix_format == PIXFORMAT_JPEG) {
-        vsync_intr_disable();
-        gpio_install_isr_service(ESP_INTR_FLAG_LEVEL1 | ESP_INTR_FLAG_IRAM);
-        err = gpio_isr_handler_add(s_state->config.pin_vsync, &vsync_isr, NULL);
-        if (err != ESP_OK) {
-            ESP_LOGE(TAG, "vsync_isr_handler_add failed (%x)", err);
-            goto fail;
-        }
-        vsync_intr_enable();
+    if(pix_format == PIXFORMAT_JPEG) {
+	    vsync_intr_disable();
+	    gpio_install_isr_service(ESP_INTR_FLAG_LEVEL1 | ESP_INTR_FLAG_IRAM);
+	    err = gpio_isr_handler_add(s_state->config.pin_vsync, &vsync_isr, NULL);
+	    if (err != ESP_OK) {
+	        ESP_LOGE(TAG, "vsync_isr_handler_add failed (%x)", err);
+	        goto fail;
+	    }
+	    vsync_intr_enable();
     }
+
     s_state->sensor.status.framesize = frame_size;
     s_state->sensor.pixformat = pix_format;
     ESP_LOGD(TAG, "Setting frame size to %dx%d", s_state->width, s_state->height);
@@ -809,7 +704,7 @@ fail:
 static esp_err_t camera_probe(const camera_config_t* config, camera_model_t* out_camera_model)
 {
     if (s_state != NULL) {
-        ESP_LOGE(TAG, "Maybe esp_camera_deinit should be called first");
+    	ESP_LOGE(TAG, "Maybe esp_camera_deinit should be called first");
         return ESP_ERR_INVALID_STATE;
     }
 
@@ -979,8 +874,8 @@ esp_err_t esp_camera_deinit(void)
     if (s_state == NULL) {
         return ESP_ERR_INVALID_STATE;
     }
-    if (s_state->dma_filter_task_fd) {
-        vTaskDelete(s_state->dma_filter_task_fd);
+    if (s_state->dma_filter_task) {
+        vTaskDelete(s_state->dma_filter_task);
     }
     if (s_state->data_ready) {
         vQueueDelete(s_state->data_ready);

@@ -179,94 +179,6 @@ int gui_set_battery_value(gui_battery_value_t value, int ticks_wait)
 static lv_group_t * encoder_group;
 static wsRGB_t led_rgb;
 
-static void slider_event_handler(lv_obj_t * obj, lv_event_t event)
-{
-    if(event == LV_EVENT_VALUE_CHANGED) {
-        printf("Value: %d, %c\n", lv_slider_get_value(obj), (char)obj->user_data);
-        switch ((char)obj->user_data) {
-            case 'R': {
-                led_rgb.r = lv_slider_get_value(obj) * 2.55;
-            }
-            break;
-
-            case 'G': {
-                led_rgb.g = lv_slider_get_value(obj) * 2.55;
-            }
-            break;
-
-            case 'B': {
-                led_rgb.b = lv_slider_get_value(obj) * 2.55;
-            }
-            break;
-        }
-        WS2812B_setLeds(&led_rgb, 1);
-    }
-}
-
-static void body_page_led(lv_obj_t * parent)
-{
-    /*Create styles*/
-    static lv_style_t style_bg;
-    static lv_style_t style_indic;
-    static lv_style_t style_knob;
-
-    lv_style_copy(&style_bg, &lv_style_pretty);
-    style_bg.body.main_color =  LV_COLOR_BLACK;
-    style_bg.body.grad_color =  LV_COLOR_GRAY;
-    style_bg.body.radius = LV_RADIUS_CIRCLE;
-    style_bg.body.border.color = LV_COLOR_WHITE;
-
-    lv_style_copy(&style_indic, &lv_style_pretty_color);
-    style_indic.body.radius = LV_RADIUS_CIRCLE;
-    style_indic.body.shadow.width = 8;
-    style_indic.body.shadow.color = style_indic.body.main_color;
-    style_indic.body.padding.left = 3;
-    style_indic.body.padding.right = 3;
-    style_indic.body.padding.top = 3;
-    style_indic.body.padding.bottom = 3;
-
-    lv_style_copy(&style_knob, &lv_style_pretty);
-    style_knob.body.radius = LV_RADIUS_CIRCLE;
-    style_knob.body.opa = LV_OPA_70;
-    style_knob.body.padding.top = 10 ;
-    style_knob.body.padding.bottom = 10 ;
-
-    /*Create a slider*/
-    lv_obj_t * slider_red = lv_slider_create(parent, NULL);
-    slider_red->user_data = (void *)'R';
-    lv_slider_set_style(slider_red, LV_SLIDER_STYLE_BG, &style_bg);
-    lv_slider_set_style(slider_red, LV_SLIDER_STYLE_INDIC,&style_indic);
-    lv_slider_set_style(slider_red, LV_SLIDER_STYLE_KNOB, &style_knob);
-    lv_obj_align(slider_red, NULL, LV_ALIGN_IN_TOP_MID, 0, 0);
-    lv_obj_set_event_cb(slider_red, slider_event_handler);
-    lv_group_add_obj(encoder_group, slider_red);
-    // lv_obj_t * slider_label = lv_label_create(slider_red, NULL);
-    // lv_label_set_text(slider_label, "R");
-    // lv_obj_set_auto_realign(slider_label, true);
-    // lv_obj_align(slider_label, slider_red, LV_ALIGN_OUT_BOTTOM_MID, 0, 10);
-    // lv_obj_set_pos(slider_label, 20, 0);
-
-    /*Create a slider*/
-    lv_obj_t * slider_green = lv_slider_create(parent, NULL);
-    slider_green->user_data = (void *)'G';
-    lv_slider_set_style(slider_green, LV_SLIDER_STYLE_BG, &style_bg);
-    lv_slider_set_style(slider_green, LV_SLIDER_STYLE_INDIC,&style_indic);
-    lv_slider_set_style(slider_green, LV_SLIDER_STYLE_KNOB, &style_knob);
-    lv_obj_align(slider_green, NULL, LV_ALIGN_CENTER, 0, 0);
-    lv_obj_set_event_cb(slider_green, slider_event_handler);
-    lv_group_add_obj(encoder_group, slider_green);
-
-    /*Create a slider*/
-    lv_obj_t * slider_blue = lv_slider_create(parent, NULL);
-    slider_blue->user_data = (void *)'B';
-    lv_slider_set_style(slider_blue, LV_SLIDER_STYLE_BG, &style_bg);
-    lv_slider_set_style(slider_blue, LV_SLIDER_STYLE_INDIC,&style_indic);
-    lv_slider_set_style(slider_blue, LV_SLIDER_STYLE_KNOB, &style_knob);
-    lv_obj_align(slider_blue, NULL, LV_ALIGN_IN_BOTTOM_MID, 0, 0);
-    lv_obj_set_event_cb(slider_blue, slider_event_handler);
-    lv_group_add_obj(encoder_group, slider_blue);
-}
-
 static void header1_create(lv_obj_t * parent)
 {
     header = lv_cont_create(parent, NULL);
@@ -294,10 +206,35 @@ static void header1_create(lv_obj_t * parent)
     lv_obj_set_pos(header, 0, 0);
 }
 
+#include "esp_camera.h"
+
+sensor_t * sensor = NULL;
+
+lv_obj_t *list_btn[7];
+
 static void disp1_list_event_handler(lv_obj_t * obj, lv_event_t event)
 {
     if(event == LV_EVENT_CLICKED) {
         printf("Clicked: %s\n", lv_list_get_btn_text(obj));
+
+        if (sensor) {
+            if (obj == list_btn[0]) {
+                sensor->set_special_effect(sensor, 0);
+                sensor->set_brightness(sensor, 1);
+            } else if (obj == list_btn[1]) {
+                sensor->set_special_effect(sensor, 1);
+            } else if (obj == list_btn[2]) {
+                sensor->set_special_effect(sensor, 2);
+            } else if (obj == list_btn[3]) {
+                sensor->set_special_effect(sensor, 3);
+            } else if (obj == list_btn[4]) {
+                sensor->set_special_effect(sensor, 4);
+            } else if (obj == list_btn[5]) {
+                sensor->set_special_effect(sensor, 5);
+            } else if (obj == list_btn[6]) {
+                sensor->set_special_effect(sensor, 6);
+            }
+        }
     }
 }
 
@@ -312,48 +249,89 @@ void disp1_list(lv_obj_t * parent)
 
     /*Add buttons to the list*/
 
-    lv_obj_t * list_btn;
+    // lv_obj_t * list_btn;
 
-    list_btn = lv_list_add_btn(list1, LV_SYMBOL_FILE, "New");
-    lv_obj_set_event_cb(list_btn, disp1_list_event_handler);
+    list_btn[0] = lv_list_add_btn(list1, LV_SYMBOL_IMAGE, "Normal");
+    lv_obj_set_event_cb(list_btn[0], disp1_list_event_handler);
 
-    list_btn = lv_list_add_btn(list1, LV_SYMBOL_DIRECTORY, "Open");
-    lv_obj_set_event_cb(list_btn, disp1_list_event_handler);
+    list_btn[1] = lv_list_add_btn(list1, LV_SYMBOL_IMAGE, "Negative");
+    lv_obj_set_event_cb(list_btn[1], disp1_list_event_handler);
 
-    list_btn = lv_list_add_btn(list1, LV_SYMBOL_CLOSE, "Delete");
-    lv_obj_set_event_cb(list_btn, disp1_list_event_handler);
+    list_btn[2] = lv_list_add_btn(list1, LV_SYMBOL_IMAGE, "Black");
+    lv_obj_set_event_cb(list_btn[2], disp1_list_event_handler);
 
 
-    list_btn = lv_list_add_btn(list1, LV_SYMBOL_EDIT, "Edit");
-    lv_obj_set_event_cb(list_btn, disp1_list_event_handler);
+    list_btn[3] = lv_list_add_btn(list1, LV_SYMBOL_IMAGE, "Reddish");
+    lv_obj_set_event_cb(list_btn[3], disp1_list_event_handler);
 
-    list_btn = lv_list_add_btn(list1, LV_SYMBOL_SAVE, "Save");
-    lv_obj_set_event_cb(list_btn, disp1_list_event_handler);
+    list_btn[4] = lv_list_add_btn(list1, LV_SYMBOL_IMAGE, "Greenish");
+    lv_obj_set_event_cb(list_btn[4], disp1_list_event_handler);
+
+    list_btn[5] = lv_list_add_btn(list1, LV_SYMBOL_IMAGE, "Blue");
+    lv_obj_set_event_cb(list_btn[5], disp1_list_event_handler);
+
+    list_btn[6] = lv_list_add_btn(list1, LV_SYMBOL_IMAGE, "Retro");
+    lv_obj_set_event_cb(list_btn[6], disp1_list_event_handler);
 }
 
-static void disp1_spinbox_event_handler(lv_obj_t * obj, lv_event_t event)
+static void disp1_slider_event_handler(lv_obj_t * obj, lv_event_t event)
 {
     if(event == LV_EVENT_VALUE_CHANGED) {
-        printf("Value: %d\n", lv_spinbox_get_value(obj));
-    }
-    else if(event == LV_EVENT_CLICKED) {
-        /*For simple test: Click the spinbox to increment its value*/
-        // lv_spinbox_increment(obj);
+        printf("Value: %d, %c\n", lv_slider_get_value(obj), (char)obj->user_data);
+        switch ((char)obj->user_data) {
+            case 'W': {
+                led_rgb.r = lv_slider_get_value(obj) * 2.55;
+                led_rgb.g = led_rgb.r;
+                led_rgb.b = led_rgb.r;
+                // if (lv_slider_get_value(obj) % 25 == 0) {
+                //     sensor->set_brightness(sensor, 5 - (lv_slider_get_value(obj) / 25));
+                // }
+            }
+            break;
+        }
+        WS2812B_setLeds(&led_rgb, 1);
     }
 }
 
-void disp1_spinbox(lv_obj_t * parent)
+void disp1_slider(lv_obj_t * parent)
 {
-    lv_obj_t * spinbox;
-    spinbox = lv_spinbox_create(parent, NULL);
-    lv_spinbox_set_digit_format(spinbox, 5, 3);
-    lv_spinbox_step_prev(spinbox);
-    lv_obj_set_width(spinbox, 135);
-    lv_obj_align(spinbox, NULL, LV_ALIGN_IN_BOTTOM_MID, 0, 0);
-    lv_obj_set_event_cb(spinbox, disp1_spinbox_event_handler);
+    /*Create styles*/
+    static lv_style_t style_bg;
+    static lv_style_t style_indic;
+    static lv_style_t style_knob;
 
-    lv_group_add_obj(encoder_group, spinbox);
-    lv_group_focus_obj(spinbox);
+    lv_style_copy(&style_bg, &lv_style_pretty);
+    style_bg.body.main_color =  LV_COLOR_BLACK;
+    style_bg.body.grad_color =  LV_COLOR_GRAY;
+    style_bg.body.radius = LV_RADIUS_CIRCLE;
+    style_bg.body.border.color = LV_COLOR_WHITE;
+
+    lv_style_copy(&style_indic, &lv_style_pretty);
+    style_indic.body.radius = LV_RADIUS_CIRCLE;
+    style_indic.body.shadow.width = 8;
+    style_indic.body.shadow.color = style_indic.body.main_color;
+    style_indic.body.padding.left = 3;
+    style_indic.body.padding.right = 3;
+    style_indic.body.padding.top = 3;
+    style_indic.body.padding.bottom = 3;
+
+    lv_style_copy(&style_knob, &lv_style_pretty);
+    style_knob.body.radius = LV_RADIUS_CIRCLE;
+    style_knob.body.opa = LV_OPA_70;
+    style_knob.body.padding.top = 10 ;
+    style_knob.body.padding.bottom = 10 ;
+    
+    lv_obj_t * slider = lv_slider_create(parent, NULL);
+    slider->user_data = (void *)'W';
+    lv_obj_set_width(slider, 100);
+    // lv_slider_set_value(slider, 50, LV_ANIM_OFF);
+    lv_slider_set_style(slider, LV_SLIDER_STYLE_BG, &style_bg);
+    lv_slider_set_style(slider, LV_SLIDER_STYLE_INDIC,&style_indic);
+    lv_slider_set_style(slider, LV_SLIDER_STYLE_KNOB, &style_knob);
+    lv_obj_align(slider, NULL, LV_ALIGN_IN_BOTTOM_MID, 0, 0);
+    lv_obj_set_event_cb(slider, disp1_slider_event_handler);
+    lv_group_add_obj(encoder_group, slider);
+    lv_group_focus_obj(slider);
 }
 
 void lv_ex_preload_1(lv_obj_t * parent)
@@ -395,13 +373,8 @@ void gui_init(lv_disp_t **disp_array, lv_indev_t **indev_array, lv_theme_t * th)
     lv_cont_set_style(lv_disp_get_scr_act(disp[1]), LV_CONT_STYLE_MAIN, th->style.bg);
 
     lv_ex_preload_1(lv_disp_get_scr_act(disp[0]));
-    // header_create();
-    // side_create();
-    // body_create();
-    // lv_task_create(gui_task, 10, LV_TASK_PRIO_MID, NULL);
-    // gui_set_source_value('V', 0, 16, portMAX_DELAY);
-    // gui_set_source_value('A', 0, 16, portMAX_DELAY);
-    // gui_set_source_value('W', 0, 16, portMAX_DELAY);
+
+    sensor = esp_camera_sensor_get();
 
     LV_FONT_DECLARE(my_symbol);
     lv_style_copy(&style_my_symbol, &lv_style_scr);
@@ -414,7 +387,6 @@ void gui_init(lv_disp_t **disp_array, lv_indev_t **indev_array, lv_theme_t * th)
 
     disp1_list(lv_disp_get_scr_act(disp[1]));
 
-    disp1_spinbox(lv_disp_get_scr_act(disp[1]));
+    disp1_slider(lv_disp_get_scr_act(disp[1]));
 
-    // body_page_led(lv_disp_get_scr_act(disp[1]));
 }
