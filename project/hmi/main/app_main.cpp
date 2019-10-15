@@ -117,11 +117,11 @@ void memory_monitor(lv_task_t * param)
 
     lv_mem_monitor_t mon;
     lv_mem_monitor(&mon);
-    printf("used: %6d (%3d %%), frag: %3d %%, biggest free: %6d, system free: %d\n", (int)mon.total_size - mon.free_size,
+    printf("used: %6d (%3d %%), frag: %3d %%, biggest free: %6d, system free: %d/%d\n", (int)mon.total_size - mon.free_size,
            mon.used_pct,
            mon.frag_pct,
            (int)mon.free_biggest_size,
-           esp_get_free_heap_size());
+           heap_caps_get_free_size(MALLOC_CAP_INTERNAL), esp_get_free_heap_size());
 }
 
 static void gui_tick_task(void * arg)
@@ -186,29 +186,12 @@ void camera_hw_init(void)
     ets_delay_us(200000);
     if (sccb_slave_prob() == -1) {
         printf("---slave prob fail\n");
-        while(1);
-        abort();
+        return;
     }
     camera_reg_cfg();
     printf("camera init done\n");
     fbuf = cam_attach();
     cam_start();
-}
-
-uint16_t *lcd_cam_buffer = NULL;
-
-void camera_trans(uint8_t* src, uint32_t fb_size)
-{
-    int x, y;
-    int i = 0;
-    for (y = 239; y >= 0; y--) {
-        for (x = 319; x >= 0; x--) {
-            lcd_cam_buffer[y*320 + x] = (src[i+0] << 8) | (src[i+1]);
-            i += 2;
-        }
-    }
-    lcd_set_index(0, 0, FRAM_WIDTH - 1, FRAM_HIGH - 1);
-    lcd_write_data((uint16_t *)lcd_cam_buffer, fb_size);
 }
 
 static void mpuISR(void*);
@@ -246,12 +229,12 @@ extern "C" void app_main()
     tcpip_adapter_init();
     ESP_ERROR_CHECK( esp_event_loop_create_default() );
 
-    ESP_LOGI(TAG, "Initializing SNTP");
-    sntp_setoperatingmode(SNTP_OPMODE_POLL);
-    sntp_setservername(0, "pool.ntp.org");
-    sntp_init();
-    setenv("TZ", "CST-8", 1);
-    tzset();
+    // ESP_LOGI(TAG, "Initializing SNTP");
+    // sntp_setoperatingmode(SNTP_OPMODE_POLL);
+    // sntp_setservername(0, "pool.ntp.org");
+    // sntp_init();
+    // setenv("TZ", "CST-8", 1);
+    // tzset();
 
     esp_read_mac(mac, ESP_MAC_WIFI_STA);
     // Initialize I2C on port 0 using I2Cbus interface
@@ -265,8 +248,6 @@ extern "C" void app_main()
     wsRGB_t rgb = {0x0, 0x0, 0x0};
     WS2812B_setLeds(&rgb, 1);
 
-    lcd_cam_buffer = (uint16_t *)heap_caps_malloc(sizeof(uint16_t)*(320 * 240), MALLOC_CAP_SPIRAM);
-
     lcd_cam_init();
     camera_hw_init();
     // Create a task to setup mpu and read sensor data
@@ -279,12 +260,20 @@ extern "C" void app_main()
     vTaskDelay(1000 /portTICK_RATE_MS);
     // wifi_init();
 
-    while (1) {
-        take_fram_lock();
-        camera_trans(fbuf, FRAM_WIDTH*FRAM_HIGH*2);
-        printf("done\n");
-        give_fram_lock();
+    if (fbuf) {
+        while (1) {
+            
+            if (GUI_PAGE_CAMERA == gui_get_page()) {
+                take_fram_lock();
+                gui_set_camera(fbuf, FRAM_WIDTH*FRAM_HIGH*2, 100 /portTICK_PERIOD_MS);
+                give_fram_lock();
+                // printf("done\n");
+            } else {
+                vTaskDelay(100 / portTICK_PERIOD_MS);
+            }
+        }
     }
+
 }
 
 /* Tasks */

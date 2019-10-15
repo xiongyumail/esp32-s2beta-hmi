@@ -31,10 +31,10 @@ lcd_pin_def_t lcd_bus = {
     .data = {LCD_D0, LCD_D1, LCD_D2, LCD_D3, LCD_D4, LCD_D5, LCD_D6, LCD_D7, LCD_D8, LCD_D9, LCD_D10, LCD_D11, LCD_D12, LCD_D13, LCD_D14, LCD_D15},
 };
 
-static lldesc_t lcd_dma[250] = {0};
+static lldesc_t lcd_dma[100] = {0};
 
 static uint16_t *lcd_buffer = NULL;
-#define LCD_BUFFER_SIZE (16 * 1024)
+#define LCD_BUFFER_SIZE (32 * 1024)
 
 #define CAM_D0 GPIO_NUM_18
 #define CAM_D2 GPIO_NUM_17
@@ -151,6 +151,7 @@ void cam_stop(void)
     // I2S0.fifo_conf.dscr_en = 0;
     I2S0.int_ena.in_suc_eof = 0;
     I2S0.conf2.cam_sync_fifo_reset = 1;
+    I2S0.conf2.cam_sync_fifo_reset = 0;
     I2S0.int_clr.in_suc_eof = 1;
 }
 
@@ -896,7 +897,7 @@ static camera_obj_t* cam_dma_create(void)
         printf("queue create fail\n");
         abort();
     }
-    camera_obj->pbuf = (uint8_t *)heap_caps_calloc(1, FRAM_WIDTH * FRAM_WIDTH * PIX_BYTE, MALLOC_CAP_SPIRAM);
+    camera_obj->pbuf = (uint8_t *)heap_caps_calloc(1, FRAM_WIDTH * FRAM_HIGH * PIX_BYTE, MALLOC_CAP_SPIRAM);
     if (!camera_obj->pbuf) {
         printf("camera fram buffer malloc error\n");
         abort();

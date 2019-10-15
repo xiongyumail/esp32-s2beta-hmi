@@ -43,6 +43,7 @@ void cam_xclk_attach(void);
 uint8_t* cam_attach(void);
 int sccb_slave_prob(void);
 void camera_reg_cfg(void);
+void cam_stop(void);
 void cam_start(void);
 void take_fram_lock(void);
 void give_fram_lock(void);

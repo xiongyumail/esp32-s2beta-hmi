@@ -10,6 +10,7 @@
 #include "esp_heap_caps.h"
 #include "gui.h"
 #include "WS2812B.h"
+#include "fram_cfg.h"
 
 typedef struct {
     int event;
@@ -21,6 +22,7 @@ typedef struct {
 #define GUI_TIME_EVENT 2
 #define GUI_SENSOR_EVENT 3
 #define GUI_MOTION_EVENT 3
+#define GUI_CAMERA_EVENT 4
 
 typedef struct {
     float temp;
@@ -485,26 +487,28 @@ static void body_page_led(lv_obj_t * parent)
     color_picker_table_update(color_picker_hsv);
 }
 
+lv_obj_t * camera_canvas = NULL;
+lv_color_t *camera_canvas_buffer = NULL;
+
 static void body_page_camera(lv_obj_t * parent)
 {
-    static lv_color_t *canvas_buffer = NULL;
-    if (canvas_buffer == NULL) {
-        canvas_buffer = (lv_color_t *)heap_caps_malloc(LV_CANVAS_BUF_SIZE_TRUE_COLOR(320, 240), MALLOC_CAP_SPIRAM);
+    if (camera_canvas_buffer == NULL) {
+        camera_canvas_buffer = (lv_color_t *)heap_caps_malloc(LV_CANVAS_BUF_SIZE_TRUE_COLOR(FRAM_WIDTH, FRAM_HIGH), MALLOC_CAP_SPIRAM);
     }
 
     lv_obj_t * h = lv_cont_create(parent, NULL);
-    // lv_obj_set_click(h, false);
     lv_cont_set_fit(h, LV_FIT_TIGHT);
-    lv_cont_set_layout(h, LV_LAYOUT_COL_L);
+    lv_cont_set_layout(h, LV_LAYOUT_COL_M);
     
     static lv_style_t style;
     lv_style_copy(&style, &lv_style_plain);
     style.text.color = LV_COLOR_RED;
-    lv_obj_t * canvas = lv_canvas_create(h, NULL);
-    lv_canvas_set_buffer(canvas, canvas_buffer, 320, 240, LV_IMG_CF_TRUE_COLOR);
-    lv_canvas_fill_bg(canvas, LV_COLOR_BLACK);
-    // lv_canvas_set_px(canvas, 10, 10, LV_COLOR_RED);
-    lv_canvas_draw_text(canvas, 0, 160, 120, &style, "NO SIGNAL!", LV_LABEL_ALIGN_CENTER);
+    camera_canvas = lv_canvas_create(h, NULL);
+    lv_obj_set_drag_parent(camera_canvas, true);
+    lv_canvas_set_buffer(camera_canvas, camera_canvas_buffer, FRAM_WIDTH, FRAM_HIGH, LV_IMG_CF_TRUE_COLOR);
+    lv_canvas_fill_bg(camera_canvas, LV_COLOR_BLACK);
+    // lv_canvas_set_px(camera_canvas, 10, 10, LV_COLOR_RED);
+    lv_canvas_draw_text(camera_canvas, 0, FRAM_HIGH/2, FRAM_WIDTH, &style, "NO SIGNAL!", LV_LABEL_ALIGN_CENTER);
 }
 
 lv_obj_t * terminal_ta;
@@ -974,6 +978,13 @@ static void gui_task(lv_task_t * arg)
                 sensor_update((gui_sensor_t *)e.arg);
             }
             break;
+
+            case GUI_CAMERA_EVENT: {
+                if (gui_page == GUI_PAGE_CAMERA) {
+                    lv_obj_invalidate(camera_canvas);
+                }
+            }
+            break;
         }
     }
 }
@@ -1058,6 +1069,14 @@ int gui_set_motion(float pitch, float roll, float yaw, int ticks_wait)
     gui_sensor.roll = roll;
     gui_sensor.yaw = yaw;
     return gui_event_send(GUI_SENSOR_EVENT, (void *)&gui_sensor, ticks_wait);
+}
+
+int gui_set_camera(uint8_t* src, size_t len, int ticks_wait) 
+{
+    if (camera_canvas_buffer) {
+        memcpy(camera_canvas_buffer, src, len);
+    }
+    return gui_event_send(GUI_CAMERA_EVENT, NULL, ticks_wait);
 }
 
 gui_page_t gui_get_page()
