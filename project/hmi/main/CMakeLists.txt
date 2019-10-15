@@ -1,4 +1,4 @@
-set(COMPONENT_SRCS "app_main.cpp" 
+set(COMPONENT_SRCS "app_main.cpp"
                    "gui.c" 
                    "my_symbol.c" 
                    "logo.c"

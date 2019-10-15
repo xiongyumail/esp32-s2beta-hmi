@@ -25,9 +25,10 @@
 #include "iot_bh1750.h"
 #include "WS2812B.h"
 #include "lvgl.h"
-#include "lcd.h"
+#include "lcd_cam.h"
 #include "ft5x06.h"
 #include "gui.h"
+#include "fram_cfg.h"
 
 static const char *TAG = "main";
 
@@ -133,7 +134,7 @@ static void gui_tick_task(void * arg)
 
 void gui_task(void *arg)
 {
-    lcd_init();
+    // lcd_init();
 
     xTaskCreate(gui_tick_task, "gui_tick_task", 512, NULL, 10, NULL);
 
@@ -177,6 +178,38 @@ void gui_task(void *arg)
     }
 }
 
+static uint8_t *fbuf = NULL;
+
+void camera_hw_init(void)
+{
+    cam_xclk_attach();
+    ets_delay_us(200000);
+    if (sccb_slave_prob() == -1) {
+        printf("---slave prob fail\n");
+        while(1);
+        abort();
+    }
+    camera_reg_cfg();
+    printf("camera init done\n");
+    fbuf = cam_attach();
+    cam_start();
+}
+
+uint16_t *lcd_cam_buffer = NULL;
+
+void camera_trans(uint8_t* src, uint32_t fb_size)
+{
+    int x, y;
+    int i = 0;
+    for (y = 239; y >= 0; y--) {
+        for (x = 319; x >= 0; x--) {
+            lcd_cam_buffer[y*320 + x] = (src[i+0] << 8) | (src[i+1]);
+            i += 2;
+        }
+    }
+    lcd_set_index(0, 0, FRAM_WIDTH - 1, FRAM_HIGH - 1);
+    lcd_write_data((uint16_t *)lcd_cam_buffer, fb_size);
+}
 
 static void mpuISR(void*);
 static void mpuTask(void*);
@@ -232,6 +265,10 @@ extern "C" void app_main()
     wsRGB_t rgb = {0x0, 0x0, 0x0};
     WS2812B_setLeds(&rgb, 1);
 
+    lcd_cam_buffer = (uint16_t *)heap_caps_malloc(sizeof(uint16_t)*(320 * 240), MALLOC_CAP_SPIRAM);
+
+    lcd_cam_init();
+    camera_hw_init();
     // Create a task to setup mpu and read sensor data
     xTaskCreate(mpuTask, "mpuTask", 4 * 1024, nullptr, 6, nullptr);
     // Create a task to print angles
@@ -240,7 +277,14 @@ extern "C" void app_main()
     xTaskCreate(gui_task, "gui_task", 4096, NULL, 5, NULL);
 
     vTaskDelay(1000 /portTICK_RATE_MS);
-    wifi_init();
+    // wifi_init();
+
+    while (1) {
+        take_fram_lock();
+        camera_trans(fbuf, FRAM_WIDTH*FRAM_HIGH*2);
+        printf("done\n");
+        give_fram_lock();
+    }
 }
 
 /* Tasks */

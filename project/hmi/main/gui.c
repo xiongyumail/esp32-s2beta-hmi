@@ -489,7 +489,7 @@ static void body_page_camera(lv_obj_t * parent)
 {
     static lv_color_t *canvas_buffer = NULL;
     if (canvas_buffer == NULL) {
-        canvas_buffer = (lv_color_t *)heap_caps_malloc(LV_CANVAS_BUF_SIZE_TRUE_COLOR(400, 400), MALLOC_CAP_SPIRAM);
+        canvas_buffer = (lv_color_t *)heap_caps_malloc(LV_CANVAS_BUF_SIZE_TRUE_COLOR(320, 240), MALLOC_CAP_SPIRAM);
     }
 
     lv_obj_t * h = lv_cont_create(parent, NULL);
@@ -501,10 +501,10 @@ static void body_page_camera(lv_obj_t * parent)
     lv_style_copy(&style, &lv_style_plain);
     style.text.color = LV_COLOR_RED;
     lv_obj_t * canvas = lv_canvas_create(h, NULL);
-    lv_canvas_set_buffer(canvas, canvas_buffer, 400, 400, LV_IMG_CF_TRUE_COLOR);
+    lv_canvas_set_buffer(canvas, canvas_buffer, 320, 240, LV_IMG_CF_TRUE_COLOR);
     lv_canvas_fill_bg(canvas, LV_COLOR_BLACK);
     // lv_canvas_set_px(canvas, 10, 10, LV_COLOR_RED);
-    lv_canvas_draw_text(canvas, 0, 200, 400, &style, "NO SIGNAL!", LV_LABEL_ALIGN_CENTER);
+    lv_canvas_draw_text(canvas, 0, 160, 120, &style, "NO SIGNAL!", LV_LABEL_ALIGN_CENTER);
 }
 
 lv_obj_t * terminal_ta;

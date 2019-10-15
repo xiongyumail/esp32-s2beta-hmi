@@ -10,7 +10,9 @@
 #include "esp32s2beta/rom/cache.h"
 #include "soc/dport_access.h"
 #include "soc/dport_reg.h"
-#include "lcd.h"
+#include "driver/ledc.h"
+#include "lcd_cam.h"
+#include "fram_cfg.h"
 
 typedef struct {
     uint8_t bit_width;
@@ -23,51 +25,233 @@ typedef struct {
 
 lcd_pin_def_t lcd_bus = {
     .bit_width = 8,
-    .pin_clk = WR,
-    .pin_rs = RS,
-    .pin_rd = RD,
-    .data = {D0, D1, D2, D3, D4, D5, D6, D7, D8, D9, D10, D11, D12, D13, D14, D15},
+    .pin_clk = LCD_WR,
+    .pin_rs = LCD_RS,
+    .pin_rd = LCD_RD,
+    .data = {LCD_D0, LCD_D1, LCD_D2, LCD_D3, LCD_D4, LCD_D5, LCD_D6, LCD_D7, LCD_D8, LCD_D9, LCD_D10, LCD_D11, LCD_D12, LCD_D13, LCD_D14, LCD_D15},
 };
 
-static lldesc_t __dma[250] = {0};
+static lldesc_t lcd_dma[250] = {0};
 
 static uint16_t *lcd_buffer = NULL;
 #define LCD_BUFFER_SIZE (16 * 1024)
 
-static void i2s_lcd_config(void)
-{
-    DPORT_CLEAR_PERI_REG_MASK(DPORT_PERIP_CLK_EN_REG, DPORT_I2S0_CLK_EN);
-    DPORT_SET_PERI_REG_MASK(DPORT_PERIP_CLK_EN_REG, DPORT_I2S0_CLK_EN);
-    DPORT_SET_PERI_REG_MASK(DPORT_PERIP_RST_EN_REG, DPORT_I2S0_RST);
-    DPORT_CLEAR_PERI_REG_MASK(DPORT_PERIP_RST_EN_REG, DPORT_I2S0_RST);
+#define CAM_D0 GPIO_NUM_18
+#define CAM_D2 GPIO_NUM_17
+#define CAM_D4 GPIO_NUM_8
+#define CAM_D6 GPIO_NUM_10
 
-    //Configure pclk, max: 20M
+#define CAM_D1 GPIO_NUM_21
+#define CAM_D3 GPIO_NUM_7
+#define CAM_D5 GPIO_NUM_9
+#define CAM_D7 GPIO_NUM_11
+
+#define CAM_XCLK  GPIO_NUM_0
+#define CAM_PCLK  GPIO_NUM_12
+#define CAM_VSYNC GPIO_NUM_14
+#define CAM_HSYNC GPIO_NUM_13
+
+#define SIG_OFFSET  (8)
+
+// #define FRAM_BUF_LINE (6)
+#define BUF_EOF_CNT  (FRAM_HIGH/FRAM_BUF_LINE)
+#define DMA_NODE_CNT  (10)
+
+#define USE_FRAM_LOCK    (1)
+#define FRAM_BUFER_DEBUG (0)
+
+typedef struct {
+    int fram_id;
+    int size;
+    uint8_t buf[FRAM_BUF_SIZE];
+} camera_fram_t;
+
+typedef struct {
+    int loop_cnt;
+    int fram_id;
+    xQueueHandle queue;
+    SemaphoreHandle_t disp_mux;
+    SemaphoreHandle_t update_mux;
+    camera_fram_t *pfram[DMA_NODE_CNT];
+    uint8_t *pbuf;
+} camera_obj_t;
+
+camera_obj_t *cam_obj = NULL;
+
+static lldesc_t cam_dma[DMA_NODE_CNT] = {0};
+
+static SemaphoreHandle_t lcd_tx_sem = NULL;
+
+void IRAM_ATTR lcd_cam_isr(void *arg)
+{
+    typeof(I2S0.int_st) int_st = I2S0.int_st;
+    I2S0.int_clr.val = int_st.val;
+    BaseType_t HPTaskAwoken = pdFALSE;
+    camera_obj_t* obj = cam_obj;
+    if (int_st.in_suc_eof) {
+        obj->pfram[obj->fram_id]->fram_id = obj->loop_cnt;
+        obj->pfram[obj->fram_id + 1]->fram_id = obj->loop_cnt + 1;
+        xQueueSendFromISR(obj->queue, (void *)&obj->fram_id, &HPTaskAwoken);
+        obj->loop_cnt += 2;
+        obj->fram_id  += 2;
+        if (obj->fram_id == DMA_NODE_CNT) obj->fram_id = 0;
+        if (obj->loop_cnt == BUF_EOF_CNT) obj->loop_cnt = 0;
+    }
+    if(int_st.out_eof) {
+        xSemaphoreGiveFromISR(lcd_tx_sem, &HPTaskAwoken);
+        I2S0.conf.tx_start = 0;
+        // I2S0.fifo_conf.dscr_en = 0;
+        I2S0.conf.tx_reset = 1;
+        I2S0.conf.tx_reset = 0;
+    }
+    if(HPTaskAwoken == pdTRUE) {
+        portYIELD_FROM_ISR();
+    }
+}
+
+static void cam_enable(void)
+{
+    gpio_matrix_in(0x38, I2S0I_H_ENABLE_IDX, false);
+}
+
+static void cam_disable(void)
+{
+    gpio_matrix_in(0x30, I2S0I_H_ENABLE_IDX, false);
+}
+
+static void cam_rst(void)
+{
+    // I2S0.conf.tx_reset = 1;
+    // I2S0.conf.tx_reset = 0;
+    I2S0.conf.rx_reset = 1;
+    I2S0.conf.rx_reset = 0;
+    // I2S0.conf.tx_fifo_reset = 1;
+    // I2S0.conf.tx_fifo_reset = 0;
+    I2S0.conf.rx_fifo_reset = 1;
+    I2S0.conf.rx_fifo_reset = 0;
+    // while ( GET_PERI_REG_MASK(I2S_CONF_REG(0), I2S_TX_FIFO_RESET_ST_M) );
+    while ( GET_PERI_REG_MASK(I2S_CONF_REG(0), I2S_RX_FIFO_RESET_ST_M) );
+}
+
+static void cam_dma_rst(void)
+{
+    I2S0.lc_conf.in_rst  = 1;
+    I2S0.lc_conf.in_rst  = 0;
+    // I2S0.lc_conf.ahbm_fifo_rst = 1;
+    // I2S0.lc_conf.ahbm_fifo_rst = 0;
+    // I2S0.lc_conf.ahbm_rst = 1;
+    // I2S0.lc_conf.ahbm_rst = 0;
+}
+
+void cam_stop(void)
+{
+    cam_disable();
+    I2S0.conf.rx_start = 0;
+    I2S0.in_link.stop = 1;
+    // I2S0.fifo_conf.dscr_en = 0;
+    I2S0.int_ena.in_suc_eof = 0;
+    I2S0.conf2.cam_sync_fifo_reset = 1;
+    I2S0.int_clr.in_suc_eof = 1;
+}
+
+void cam_start(void)
+{
+    I2S0.conf2.cam_sync_fifo_reset = 0;
+    I2S0.fifo_conf.dscr_en = 1;
+    I2S0.in_link.start = 1;
+    I2S0.conf.rx_start = 1;
+    I2S0.int_clr.in_suc_eof = 1;
+    I2S0.int_ena.in_suc_eof = 1;
+    cam_enable();
+}
+
+static void cam_obj_init(camera_obj_t *obj)
+{
+    obj->loop_cnt = 0;
+    obj->fram_id = 0;
+    for (int i = 0; i < DMA_NODE_CNT; i++) {
+        obj->pfram[i]->fram_id = 0;
+        obj->pfram[i]->size = FRAM_BUF_SIZE;
+    }
+    xQueueReset(obj->queue);
+}
+
+static void lcd_cam_config(void)
+{
+
+    //Enable I2S periph
+    periph_module_enable(PERIPH_I2S0_MODULE);
+//    REG_WRITE(APB_CTRL_SARADC_CTRL_REG, REG_READ(APB_CTRL_SARADC_CTRL_REG) & (~APB_CTRL_SARADC_DATA_TO_I2S));
+
+    I2S0.conf.val = 0;
+    I2S0.conf1.val = 0;
+    I2S0.conf1.rx_pcm_bypass = 1;
+    I2S0.sample_rate_conf.val = 0;
+    I2S0.sample_rate_conf.rx_bck_div_num = 4;
+    I2S0.timing.val = 0;
+    I2S0.conf2.val = 0;
+    I2S0.fifo_conf.val = 0;
+    I2S0.fifo_conf.rx_fifo_mod_force_en = 1;
+    I2S0.fifo_conf.rx_data_num = 32;
+    I2S0.conf.rx_right_first = 1;
+    I2S0.conf.rx_dma_equal = 1;
+
+    I2S0.conf2.lcd_en = 1;
+    I2S0.conf2.camera_en = 1;
+    I2S0.conf2.cam_clk_loopback = 0;
+    I2S0.conf2.i_v_sync_filter_en = 1;
+    I2S0.conf2.i_v_sync_filter_thres = 1;
+    I2S0.fifo_conf.rx_data_num = 32;
+    I2S0.sample_rate_conf.rx_bits_mod = 8;
+    I2S0.fifo_conf.rx_fifo_mod = 1;
+    I2S0.conf_chan.rx_chan_mod = 1;
+
     I2S0.clkm_conf.val = 0;
     I2S0.clkm_conf.clkm_div_num = 2;
     I2S0.clkm_conf.clkm_div_b = 0;
-    I2S0.clkm_conf.clkm_div_a =63;
-    I2S0.clkm_conf.clk_en = 1;
+    I2S0.clkm_conf.clkm_div_a = 0;
     I2S0.clkm_conf.clk_sel = 2;
-    I2S0.sample_rate_conf.val = 0;
-    I2S0.sample_rate_conf.tx_bck_div_num = 2;
-
+    I2S0.clkm_conf.clk_en = 1;
+    cam_rst();
+    cam_dma_rst();
+    I2S0.conf2.cam_sync_fifo_reset = 1;
+    //while(I2S0.conf2.cam_sync_fifo_reset_st);
     I2S0.int_ena.val = 0;
     I2S0.int_clr.val = ~0;
+    printf("i2s version  0x%x\n", I2S0.date);
 
-    I2S0.conf.val = 0;
+    // DPORT_CLEAR_PERI_REG_MASK(DPORT_PERIP_CLK_EN_REG, DPORT_I2S0_CLK_EN);
+    // DPORT_SET_PERI_REG_MASK(DPORT_PERIP_CLK_EN_REG, DPORT_I2S0_CLK_EN);
+    // DPORT_SET_PERI_REG_MASK(DPORT_PERIP_RST_EN_REG, DPORT_I2S0_RST);
+    // DPORT_CLEAR_PERI_REG_MASK(DPORT_PERIP_RST_EN_REG, DPORT_I2S0_RST);
+
+    //Configure pclk, max: 20M
+    // I2S0.clkm_conf.val = 0;
+    // I2S0.clkm_conf.clkm_div_num = 2;
+    // I2S0.clkm_conf.clkm_div_b = 0;
+    // I2S0.clkm_conf.clkm_div_a =63;
+    // I2S0.clkm_conf.clk_en = 1;
+    // I2S0.clkm_conf.clk_sel = 2;
+    // I2S0.sample_rate_conf.val = 0;
+    I2S0.sample_rate_conf.tx_bck_div_num = 2;
+
+    I2S0.int_ena.out_eof = 0;
+    I2S0.int_clr.out_eof = 1;
+
+    // I2S0.conf.val = 0;
     I2S0.conf.tx_right_first = 1;
     I2S0.conf.tx_msb_right = 1;
     I2S0.conf.tx_dma_equal = 1;
 
-    I2S0.conf1.val = 0;
+    // I2S0.conf1.val = 0;
     I2S0.conf1.tx_pcm_bypass = 1;
     I2S0.conf1.tx_stop_en = 1;
     I2S0.timing.val = 0;
     //Set LCD mode
-    I2S0.conf2.val = 0;
+    // I2S0.conf2.val = 0;
     I2S0.conf2.lcd_en = 1;
 
-    I2S0.fifo_conf.val = 0;
+    // I2S0.fifo_conf.val = 0;
     I2S0.fifo_conf.tx_fifo_mod_force_en = 1;
     I2S0.fifo_conf.tx_data_num = 48;
     I2S0.fifo_conf.tx_fifo_mod = 2;
@@ -76,9 +260,10 @@ static void i2s_lcd_config(void)
 
     I2S0.sample_rate_conf.tx_bits_mod = lcd_bus.bit_width;
     printf("--------I2S version  %x\n", I2S0.date);
+    esp_intr_alloc(ETS_I2S0_INTR_SOURCE, 0, lcd_cam_isr, NULL, NULL);
 }
 
-static void i2s_lcd_set_pin(void)
+static void lcd_cam_set_pin(void)
 {
     PIN_FUNC_SELECT(GPIO_PIN_MUX_REG[lcd_bus.pin_clk], PIN_FUNC_GPIO);
     gpio_set_direction(lcd_bus.pin_clk, GPIO_MODE_OUTPUT);
@@ -105,51 +290,95 @@ static void i2s_lcd_set_pin(void)
         }
         
     }
+
+    gpio_matrix_in(0x30, I2S0I_H_ENABLE_IDX, false);
+    PIN_FUNC_SELECT(GPIO_PIN_MUX_REG[CAM_HSYNC], PIN_FUNC_GPIO);
+    gpio_set_direction(CAM_HSYNC, GPIO_MODE_INPUT);
+    gpio_matrix_in(CAM_HSYNC, I2S0I_H_SYNC_IDX, false);
+
+    PIN_FUNC_SELECT(GPIO_PIN_MUX_REG[CAM_VSYNC], PIN_FUNC_GPIO);
+    gpio_set_direction(CAM_VSYNC, GPIO_MODE_INPUT);
+    gpio_matrix_in(CAM_VSYNC, I2S0I_V_SYNC_IDX, true);
+
+    PIN_FUNC_SELECT(GPIO_PIN_MUX_REG[CAM_PCLK], PIN_FUNC_GPIO);
+    gpio_set_direction(CAM_PCLK, GPIO_MODE_INPUT);
+    gpio_set_pull_mode(CAM_PCLK, GPIO_PULLUP_ONLY);
+    gpio_matrix_in(CAM_PCLK, I2S0I_WS_IN_IDX, false);
+
+    PIN_FUNC_SELECT(GPIO_PIN_MUX_REG[CAM_D0], PIN_FUNC_GPIO);
+    gpio_set_direction(CAM_D0, GPIO_MODE_INPUT);
+    gpio_set_pull_mode(CAM_D0, GPIO_PULLUP_ONLY);
+    gpio_matrix_in(CAM_D0, I2S0I_DATA_IN0_IDX + SIG_OFFSET, false);
+
+    PIN_FUNC_SELECT(GPIO_PIN_MUX_REG[CAM_D1], PIN_FUNC_GPIO);
+    gpio_set_direction(CAM_D1, GPIO_MODE_INPUT);
+    gpio_set_pull_mode(CAM_D1, GPIO_PULLUP_ONLY);
+    gpio_matrix_in(CAM_D1, I2S0I_DATA_IN1_IDX + SIG_OFFSET, false);
+
+    PIN_FUNC_SELECT(GPIO_PIN_MUX_REG[CAM_D2], PIN_FUNC_GPIO);
+    gpio_set_direction(CAM_D2, GPIO_MODE_INPUT);
+    gpio_set_pull_mode(CAM_D2, GPIO_PULLUP_ONLY);
+    gpio_matrix_in(CAM_D2, I2S0I_DATA_IN2_IDX + SIG_OFFSET, false);
+
+    PIN_FUNC_SELECT(GPIO_PIN_MUX_REG[CAM_D3], PIN_FUNC_GPIO);
+    gpio_set_direction(CAM_D3, GPIO_MODE_INPUT);
+    gpio_set_pull_mode(CAM_D3, GPIO_PULLUP_ONLY);
+    gpio_matrix_in(CAM_D3, I2S0I_DATA_IN3_IDX + SIG_OFFSET, false);
+
+    PIN_FUNC_SELECT(GPIO_PIN_MUX_REG[CAM_D4], PIN_FUNC_GPIO);
+    gpio_set_direction(CAM_D4, GPIO_MODE_INPUT);
+    gpio_set_pull_mode(CAM_D4, GPIO_PULLUP_ONLY);
+    gpio_matrix_in(CAM_D4, I2S0I_DATA_IN4_IDX + SIG_OFFSET, false);
+
+    PIN_FUNC_SELECT(GPIO_PIN_MUX_REG[CAM_D5], PIN_FUNC_GPIO);
+    gpio_set_direction(CAM_D5, GPIO_MODE_INPUT);
+    gpio_set_pull_mode(CAM_D5, GPIO_PULLUP_ONLY);
+    gpio_matrix_in(CAM_D5, I2S0I_DATA_IN5_IDX + SIG_OFFSET, false);
+
+    PIN_FUNC_SELECT(GPIO_PIN_MUX_REG[CAM_D6], PIN_FUNC_GPIO);
+    gpio_set_direction(CAM_D6, GPIO_MODE_INPUT);
+    gpio_set_pull_mode(CAM_D6, GPIO_PULLUP_ONLY);
+    gpio_matrix_in(CAM_D6, I2S0I_DATA_IN6_IDX + SIG_OFFSET, false);
+
+    PIN_FUNC_SELECT(GPIO_PIN_MUX_REG[CAM_D7], PIN_FUNC_GPIO);
+    gpio_set_direction(CAM_D7, GPIO_MODE_INPUT);
+    gpio_set_pull_mode(CAM_D7, GPIO_PULLUP_ONLY);
+    gpio_matrix_in(CAM_D7, I2S0I_DATA_IN7_IDX + SIG_OFFSET, false);
 }
 
-typedef struct i2s_isr_obj {
-    uint8_t *fram_end;
-    uint8_t *fram_sart;
-    uint8_t *fram_cur;
-    uint16_t tangel;
-} i2s_isr_obj_t;
-
-static SemaphoreHandle_t tx_sem = NULL;
-
-static i2s_isr_obj_t i2s_fram_obj = {0};
-static int fram_ena_flag = 0;
-
-static void _i2s_isr(void)
+void cam_xclk_attach(void)
 {
-    if(I2S0.int_st.out_eof) {
-        BaseType_t HPTaskAwoken;
-        xSemaphoreGiveFromISR(tx_sem, &HPTaskAwoken);
-        I2S0.conf.tx_start = 0;
-        I2S0.fifo_conf.dscr_en = 0;
-        I2S0.conf.tx_reset = 1;
-        I2S0.conf.tx_reset = 0;
-        if(HPTaskAwoken == pdTRUE) {
-            portYIELD_FROM_ISR();
-        }
-    }
-    I2S0.int_clr.val = ~0;
+    ledc_timer_config_t ledc_timer = {
+        .duty_resolution = LEDC_TIMER_1_BIT,
+        .freq_hz = 20000000,
+        .speed_mode = LEDC_LOW_SPEED_MODE,
+        .timer_num = LEDC_TIMER_1
+    };
+    ledc_timer_config(&ledc_timer);
+    ledc_channel_config_t ledc_channel = {
+        .channel    = LEDC_CHANNEL_2,
+        .duty       = 1,
+        .gpio_num   = CAM_XCLK,
+        .speed_mode = LEDC_LOW_SPEED_MODE,
+        .timer_sel  = LEDC_TIMER_1,
+        .hpoint     = 0
+    };
+    ledc_channel_config(&ledc_channel);
+    printf("CAM_XCLK setup\n");
 }
 
-static void i2s_lcd_interface_init(void)
+static void lcd_interface_init(void)
 {
     for(int i = 0; i < 30; i++) {
-        __dma[i].size = 0;
-        __dma[i].length = 0;
-        __dma[i].sosf = 0;
-        __dma[i].eof = 1;
-        __dma[i].owner = 1;
-        __dma[i].buf = NULL;
-        __dma[i].empty = NULL;
+        lcd_dma[i].size = 0;
+        lcd_dma[i].length = 0;
+        lcd_dma[i].sosf = 0;
+        lcd_dma[i].eof = 1;
+        lcd_dma[i].owner = 1;
+        lcd_dma[i].buf = NULL;
+        lcd_dma[i].empty = NULL;
     }
-    i2s_lcd_set_pin();
-    i2s_lcd_config();
-    tx_sem = xSemaphoreCreateBinary();
-    esp_intr_alloc(ETS_I2S0_INTR_SOURCE, 0, _i2s_isr, (void *)&i2s_fram_obj, NULL);
+    lcd_tx_sem = xSemaphoreCreateBinary();
     I2S0.int_ena.out_eof = 1;
 }
 
@@ -159,7 +388,7 @@ static inline void i2s_dma_start(void)
     I2S0.out_link.start = 1;
     I2S0.fifo_conf.dscr_en = 1;
     I2S0.conf.tx_start = 1;
-    xSemaphoreTake(tx_sem, portMAX_DELAY);
+    xSemaphoreTake(lcd_tx_sem, portMAX_DELAY);
 }
 
 static inline void i2s_lcd_dma_write(uint8_t *buf, size_t length)
@@ -169,18 +398,18 @@ static inline void i2s_lcd_dma_write(uint8_t *buf, size_t length)
     int cnt = 0;
     while(len) {
         trans_len = len > 4000 ? 4000 : len;
-        __dma[cnt].size = trans_len;
-        __dma[cnt].length = trans_len;
-        __dma[cnt].buf = buf;
-        __dma[cnt].eof = 0;
-        __dma[cnt].empty = &__dma[cnt+1];
+        lcd_dma[cnt].size = trans_len;
+        lcd_dma[cnt].length = trans_len;
+        lcd_dma[cnt].buf = buf;
+        lcd_dma[cnt].eof = 0;
+        lcd_dma[cnt].empty = &lcd_dma[cnt+1];
         buf += trans_len;
         len -= trans_len;
         cnt++;
     }
-    __dma[cnt-1].eof = 1;
-    __dma[cnt-1].empty = NULL;
-    I2S0.out_link.addr = ((uint32_t)&__dma[0]) & 0xfffff;
+    lcd_dma[cnt-1].eof = 1;
+    lcd_dma[cnt-1].empty = NULL;
+    I2S0.out_link.addr = ((uint32_t)&lcd_dma[0]) & 0xfffff;
     i2s_dma_start();
 }
 
@@ -624,11 +853,7 @@ static void nt35510_init(void)
     lcd_write_reg(0xf308, 0x0000);
 
     lcd_write_reg(0x3500, 0x0000);
-    if (lcd_bus.bit_width == 8) {
-        lcd_write_reg(0x3600, 0x0060); // change rgb order
-    } else {
-        lcd_write_reg(0x3600, 0x0060);
-    }
+    lcd_write_reg(0x3600, 0x0060);
     
     lcd_write_reg(0x3A00, 0x0005);
     //Display On
@@ -639,12 +864,134 @@ static void nt35510_init(void)
     lcd_write_cmd_byte(0x2C00);
 }
 
-void lcd_init(void)
+static camera_obj_t* cam_dma_create(void)
+{
+    camera_obj_t *camera_obj = (camera_obj_t *)malloc(sizeof(camera_obj_t));
+    if (!camera_obj) {
+        printf("camera object malloc error\n");
+        abort();
+    }
+    memset(camera_obj, 0, sizeof(camera_obj_t));
+    for (int i = 0; i < DMA_NODE_CNT; i++) {
+        camera_obj->pfram[i] = (camera_fram_t *)malloc(sizeof(camera_fram_t));
+        if (!camera_obj->pfram[i]) {
+            printf("camera dma node buffer malloc error\n");
+            abort();
+        }
+        memset(camera_obj->pfram[i], 0, sizeof(camera_fram_t));
+    }
+    camera_obj->disp_mux = xSemaphoreCreateBinary();
+    if (!camera_obj->disp_mux) {
+        printf("disp mux create fail\n");
+        abort();
+    }
+    camera_obj->update_mux = xSemaphoreCreateBinary();
+    if (!camera_obj->update_mux) {
+        printf("update mux create fail\n");
+        abort();
+    }
+    xSemaphoreGive(camera_obj->update_mux);
+    camera_obj->queue = xQueueCreate(10, sizeof(int));
+    if (!camera_obj->queue) {
+        printf("queue create fail\n");
+        abort();
+    }
+    camera_obj->pbuf = (uint8_t *)heap_caps_calloc(1, FRAM_WIDTH * FRAM_WIDTH * PIX_BYTE, MALLOC_CAP_SPIRAM);
+    if (!camera_obj->pbuf) {
+        printf("camera fram buffer malloc error\n");
+        abort();
+    }
+    printf("fram buf addr: %p\n", camera_obj->pbuf);
+    for (int i = 0; i < FRAM_WIDTH * FRAM_HIGH * PIX_BYTE; i++) {
+        camera_obj->pbuf[i] = ((i + 1) % 32);
+    }
+    for (int i = 0; i < FRAM_WIDTH * FRAM_HIGH * PIX_BYTE; i++) {
+        if (camera_obj->pbuf[i] != ((i + 1) % 32)) {
+            printf("item error  %d  %d  %d\n", i, camera_obj->pbuf[i], ((i + 1) % 32));
+        }
+    }
+    printf("fram buf test done\n");
+    cam_obj_init(camera_obj);
+    return camera_obj;
+}
+
+#if USE_FRAM_LOCK
+typedef enum {
+    FRAM_UNLOCK,
+    FRAM_LOCK,
+    FRAM_IN_PROGRESS,
+} fram_sta_t;
+
+fram_sta_t fram_status = FRAM_UNLOCK;
+#endif
+
+int acc = 0;
+
+//Copy fram from DMA buffer to fram buffer
+static void cam_fram_copy_task(void *param)
+{
+    camera_obj_t* obj = (camera_obj_t*)param;
+    int id = 0;
+    while (1) {
+        if (xSemaphoreTake(obj->update_mux, (portTickType)10) != pdTRUE) {
+            xQueueReceive(obj->queue, (void *)&id, (portTickType)portMAX_DELAY);
+        } else {
+            while (1) {
+                xQueueReceive(obj->queue, (void *)&id, (portTickType)portMAX_DELAY);
+                if (fram_status != FRAM_IN_PROGRESS && obj->pfram[id]->fram_id != 0) {
+                    continue;
+                }
+                fram_status = FRAM_IN_PROGRESS;
+                // printf("%d %d\n", obj->pfram[id]->fram_id, obj->pfram[id + 1]->fram_id);
+                memcpy(obj->pbuf + obj->pfram[id]->fram_id * FRAM_BUF_SIZE, obj->pfram[id]->buf, FRAM_BUF_SIZE);
+                memcpy(obj->pbuf + obj->pfram[id + 1]->fram_id * FRAM_BUF_SIZE, obj->pfram[id + 1]->buf, FRAM_BUF_SIZE);
+                if (obj->pfram[id + 1]->fram_id == BUF_EOF_CNT - 1) {
+                    xSemaphoreGive(obj->disp_mux);
+                    fram_status = FRAM_LOCK;
+                    break;
+                }
+            }
+        }
+    }
+}
+
+void take_fram_lock(void)
+{
+    xSemaphoreTake(cam_obj->disp_mux, (portTickType)portMAX_DELAY);
+}
+
+void give_fram_lock(void)
+{
+    xSemaphoreGive(cam_obj->update_mux);
+}
+
+uint8_t * cam_attach(void)
+{
+    cam_obj = cam_dma_create();
+    for (int i = 0; i < DMA_NODE_CNT; i++) {
+        cam_dma[i].size = FRAM_BUF_SIZE;
+        cam_dma[i].length = FRAM_BUF_SIZE;
+        cam_dma[i].eof = 1;
+        cam_dma[i].owner = 1;
+        cam_dma[i].buf = cam_obj->pfram[i]->buf;
+        cam_dma[i].empty = &cam_dma[(i + 1) % DMA_NODE_CNT];
+    }
+    xTaskCreate(cam_fram_copy_task, "cam_fram_copy_task", 1024 * 4, (void *)cam_obj, 8, NULL);
+    // i2s_camera_config();
+    I2S0.in_link.addr = ((uint32_t)&cam_dma[0]) & 0xfffff;
+    I2S0.rx_eof_num = FRAM_BUF_SIZE * 2;
+    // esp_intr_alloc(ETS_I2S0_INTR_SOURCE, 0, cam_isr, (void *)cam_obj, NULL);
+    return cam_obj->pbuf;
+}
+
+void lcd_cam_init(void)
 {
 #ifdef LCD_BUFFER_SIZE
     lcd_buffer = (uint16_t *)heap_caps_malloc(LCD_BUFFER_SIZE, MALLOC_CAP_DMA);
 #endif
-    i2s_lcd_interface_init();
+    lcd_cam_set_pin();
+    lcd_cam_config();
+    lcd_interface_init();
     nt35510_init();
     nt35510_init();
 }
