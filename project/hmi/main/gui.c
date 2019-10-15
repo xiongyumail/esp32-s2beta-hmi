@@ -80,7 +80,7 @@ static void time_update()
         sprintf(strftime_buf, "%02d#ffffff :#%02d", timeinfo.tm_hour, timeinfo.tm_min);
     }
     
-    lv_label_set_text(time_clock, strftime_buf);
+    lv_label_set_text(time_clock, "");
 }
 
 static void sensor_update(gui_sensor_t *sensor) 
