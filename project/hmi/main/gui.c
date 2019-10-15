@@ -282,13 +282,13 @@ static void color_picker_table_update(lv_color_hsv_t hsv)
 {
     char str[16];
 
-    lv_color_t rgb;
-    rgb = lv_color_hsv_to_rgb(hsv.h, hsv.s, hsv.v);
-    sprintf(str, "%d", rgb.ch.red << 3);
+    lv_color32_t rgb;
+    rgb = (lv_color32_t)lv_color_to32(lv_color_hsv_to_rgb(hsv.h, hsv.s, hsv.v));
+    sprintf(str, "%d", rgb.ch.red);
     lv_table_set_cell_value(color_picker_table, 0, 1, str);
-    sprintf(str, "%d", rgb.ch.green << 2);
+    sprintf(str, "%d", rgb.ch.green);
     lv_table_set_cell_value(color_picker_table, 1, 1, str);
-    sprintf(str, "%d", rgb.ch.blue << 3);
+    sprintf(str, "%d", rgb.ch.blue);
     lv_table_set_cell_value(color_picker_table, 2, 1, str);
 
     sprintf(str, "%d", hsv.h);
@@ -297,7 +297,7 @@ static void color_picker_table_update(lv_color_hsv_t hsv)
     lv_table_set_cell_value(color_picker_table, 1, 3, str);
     sprintf(str, "%d", hsv.v);
     lv_table_set_cell_value(color_picker_table, 2, 3, str);
-    sprintf(str, "#%06x", rgb.ch.red << 19 | rgb.ch.green << 10 | rgb.ch.blue << 3);
+    sprintf(str, "#%06x", rgb.ch.red << 16 | rgb.ch.green << 8 | rgb.ch.blue);
     lv_table_set_cell_value(color_picker_table, 3, 0, str);
 }
 
@@ -356,9 +356,10 @@ static void color_picker_event_cb(lv_obj_t * obj, lv_event_t event)
             led_style->body.main_color = lv_color_hsv_to_rgb(color_picker_hsv.h, color_picker_hsv.s, color_picker_hsv.v);
             lv_obj_refresh_style(color_picker_led);
             color_picker_table_update(color_picker_hsv);
-            led_rgb.r = led_style->body.main_color.ch.red << 3;
-            led_rgb.g = led_style->body.main_color.ch.green << 2;
-            led_rgb.b = led_style->body.main_color.ch.blue << 3;
+            lv_color32_t rgb = (lv_color32_t)lv_color_to32(led_style->body.main_color);
+            led_rgb.r = rgb.ch.red;
+            led_rgb.g = rgb.ch.green;
+            led_rgb.b = rgb.ch.blue;
             if (led_state) {
                 WS2812B_setLeds(&led_rgb, 1);
             }
@@ -450,10 +451,10 @@ static void body_page_led(lv_obj_t * parent)
     lv_obj_set_click(color_picker_led, true);
     lv_obj_set_event_cb(color_picker_led, led_event_cb);
     lv_obj_set_size(color_picker_led, LV_DPI, LV_DPI);
-    
-    led_rgb.r = led_style.body.main_color.ch.red << 3;
-    led_rgb.g = led_style.body.main_color.ch.green << 2;
-    led_rgb.b = led_style.body.main_color.ch.blue << 3;
+    lv_color32_t rgb = (lv_color32_t)lv_color_to32(led_style.body.main_color);
+    led_rgb.r = rgb.ch.red;
+    led_rgb.g = rgb.ch.green;
+    led_rgb.b = rgb.ch.blue;
     if (led_state) {
         lv_led_on(color_picker_led);
         WS2812B_setLeds(&led_rgb, 1);

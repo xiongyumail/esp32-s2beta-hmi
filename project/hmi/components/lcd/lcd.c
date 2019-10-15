@@ -16,14 +16,16 @@ typedef struct {
     uint8_t bit_width;
     uint8_t pin_clk;
     uint8_t pin_rs;
+    uint8_t pin_rd;
     uint8_t data[16];
 } lcd_pin_def_t;
 
 
 lcd_pin_def_t lcd_bus = {
-    .bit_width = 16,
+    .bit_width = 8,
     .pin_clk = WR,
     .pin_rs = RS,
+    .pin_rd = RD,
     .data = {D0, D1, D2, D3, D4, D5, D6, D7, D8, D9, D10, D11, D12, D13, D14, D15},
 };
 
@@ -67,12 +69,12 @@ static void i2s_lcd_config(void)
 
     I2S0.fifo_conf.val = 0;
     I2S0.fifo_conf.tx_fifo_mod_force_en = 1;
-    I2S0.fifo_conf.tx_data_num = 32;
-    I2S0.fifo_conf.tx_fifo_mod = 3;
+    I2S0.fifo_conf.tx_data_num = 48;
+    I2S0.fifo_conf.tx_fifo_mod = 2;
 
     I2S0.conf_chan.tx_chan_mod = 0;//remove
 
-    I2S0.sample_rate_conf.tx_bits_mod = 16;
+    I2S0.sample_rate_conf.tx_bits_mod = lcd_bus.bit_width;
     printf("--------I2S version  %x\n", I2S0.date);
 }
 
@@ -87,11 +89,21 @@ static void i2s_lcd_set_pin(void)
     gpio_set_direction(lcd_bus.pin_rs, GPIO_MODE_OUTPUT);
     gpio_set_pull_mode(lcd_bus.pin_rs,GPIO_PULLUP_ONLY);
 
+    PIN_FUNC_SELECT(GPIO_PIN_MUX_REG[lcd_bus.pin_rd], PIN_FUNC_GPIO);
+    gpio_set_direction(lcd_bus.pin_rd, GPIO_MODE_OUTPUT);
+    gpio_set_pull_mode(lcd_bus.pin_rd,GPIO_PULLUP_ONLY);
+    gpio_set_level(lcd_bus.pin_rd, 1);
+
     for(int i = 0; i < lcd_bus.bit_width; i++) {
         PIN_FUNC_SELECT(GPIO_PIN_MUX_REG[lcd_bus.data[i]], PIN_FUNC_GPIO);
         gpio_set_direction(lcd_bus.data[i], GPIO_MODE_OUTPUT);
         gpio_set_pull_mode(lcd_bus.data[i],GPIO_PULLUP_ONLY);
-        gpio_matrix_out(lcd_bus.data[i], I2S0O_DATA_OUT8_IDX+i, false, 0);
+        if (lcd_bus.bit_width == 8) {
+            gpio_matrix_out(lcd_bus.data[i], I2S0O_DATA_OUT16_IDX+i, false, 0);
+        } else {
+            gpio_matrix_out(lcd_bus.data[i], I2S0O_DATA_OUT8_IDX+i, false, 0);
+        }
+        
     }
 }
 
@@ -172,19 +184,31 @@ static inline void i2s_lcd_dma_write(uint8_t *buf, size_t length)
     i2s_dma_start();
 }
 
-static void lcd_write_reg(uint16_t cmd, uint16_t data)
-{
-    RS_LOW();
-    i2s_lcd_dma_write(&cmd, 2);
-    RS_HIGH();
-    i2s_lcd_dma_write(&data, 2);
-}
-
 static void lcd_write_cmd_byte(uint16_t cmd)
 {
+    uint32_t val;
+    if (lcd_bus.bit_width == 8) {
+        val = (cmd >> 8) | (cmd << 8);
+    } else {
+        val = cmd;
+        
+    }
     RS_LOW();
-    i2s_lcd_dma_write(&cmd, 2);
+    i2s_lcd_dma_write(&val, 2);
     RS_HIGH();
+}
+
+static void lcd_write_reg(uint16_t cmd, uint16_t data)
+{
+    uint32_t val;
+    lcd_write_cmd_byte(cmd);
+
+    if (lcd_bus.bit_width == 8) {
+        val = (data >> 8) | (data << 8);
+    } else {
+        val = data;
+    }
+    i2s_lcd_dma_write(&val, 2);
 }
 
 void IRAM_ATTR lcd_write_data(uint16_t *data, size_t len)
@@ -600,7 +624,12 @@ static void nt35510_init(void)
     lcd_write_reg(0xf308, 0x0000);
 
     lcd_write_reg(0x3500, 0x0000);
-    lcd_write_reg(0x3600, 0x0060);
+    if (lcd_bus.bit_width == 8) {
+        lcd_write_reg(0x3600, 0x0060); // change rgb order
+    } else {
+        lcd_write_reg(0x3600, 0x0060);
+    }
+    
     lcd_write_reg(0x3A00, 0x0005);
     //Display On
     lcd_write_cmd_byte(0x2900);
@@ -616,5 +645,6 @@ void lcd_init(void)
     lcd_buffer = (uint16_t *)heap_caps_malloc(LCD_BUFFER_SIZE, MALLOC_CAP_DMA);
 #endif
     i2s_lcd_interface_init();
+    nt35510_init();
     nt35510_init();
 }

@@ -8,6 +8,7 @@ extern "C" {
 
 #define  WR  GPIO_NUM_34
 #define  RS  GPIO_NUM_1
+#define  RD  GPIO_NUM_2
 
 #define  D0  GPIO_NUM_35
 #define  D1  GPIO_NUM_37
