@@ -351,7 +351,7 @@ void cam_xclk_attach(void)
 {
     ledc_timer_config_t ledc_timer = {
         .duty_resolution = LEDC_TIMER_1_BIT,
-        .freq_hz = 20000000,
+        .freq_hz = 10000000,
         .speed_mode = LEDC_LOW_SPEED_MODE,
         .timer_num = LEDC_TIMER_1
     };

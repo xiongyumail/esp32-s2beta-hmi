@@ -11,6 +11,7 @@
 #include "gui.h"
 #include "WS2812B.h"
 #include "fram_cfg.h"
+#include "ov2640.h"
 
 typedef struct {
     int event;
@@ -490,6 +491,14 @@ static void body_page_led(lv_obj_t * parent)
 lv_obj_t * camera_canvas = NULL;
 lv_color_t *camera_canvas_buffer = NULL;
 
+static void cam_roller_event_handler(lv_obj_t * obj, lv_event_t event)
+{
+    if(event == LV_EVENT_VALUE_CHANGED) {
+        char id = lv_roller_get_selected(obj);
+        OV2640_Special_Effects(id);
+    }
+}
+
 static void body_page_camera(lv_obj_t * parent)
 {
     if (camera_canvas_buffer == NULL) {
@@ -509,6 +518,39 @@ static void body_page_camera(lv_obj_t * parent)
     lv_canvas_fill_bg(camera_canvas, LV_COLOR_BLACK);
     // lv_canvas_set_px(camera_canvas, 10, 10, LV_COLOR_RED);
     lv_canvas_draw_text(camera_canvas, 0, FRAM_HIGH/2, FRAM_WIDTH, &style, "NO SIGNAL!", LV_LABEL_ALIGN_CENTER);
+
+    lv_obj_t * h1 = lv_cont_create(parent, NULL);
+    lv_obj_set_size(h1, 160, 200);
+
+    lv_obj_t *label = lv_label_create(h1, NULL);
+    lv_label_set_text(label, "Special Effects");
+    lv_obj_align(label, NULL, LV_ALIGN_IN_TOP_MID, 0, 0);
+
+    static lv_style_t style_font;
+    lv_style_copy(&style_font, &lv_style_scr);
+    style_font.text.font = &lv_font_roboto_28;
+
+    lv_obj_t * h2 = lv_cont_create(h1, NULL);
+    lv_obj_set_size(h2, 160, 160);
+    lv_obj_align(h2, NULL, LV_ALIGN_IN_BOTTOM_MID, 0, 0);
+    lv_obj_t *roller = lv_roller_create(h2, NULL);
+    lv_label_set_style(roller, LV_LABEL_STYLE_MAIN, &style_font);
+    lv_roller_set_options(roller,
+                        "Normal\n"
+                        "Negative\n"
+                        "Black\n"
+                        "Red\n"
+                        "Green\n"
+                        "Blue\n"
+                        "Vintage",
+                        LV_ROLLER_MODE_INIFINITE);
+
+    lv_roller_set_visible_row_count(roller, 4);
+    lv_obj_align(roller, NULL, LV_ALIGN_CENTER, 0, 0);
+    lv_obj_set_event_cb(roller, cam_roller_event_handler);
+    OV2640_Special_Effects(0);
+
+    
 }
 
 lv_obj_t * terminal_ta;
