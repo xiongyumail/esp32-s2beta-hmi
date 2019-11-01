@@ -5,7 +5,7 @@
 
 ## How to use
 
-You can try the full firmware `esp32-s2beta-hmi.bin` first, and write the address 0x0
+You can try the full firmware `esp32-s2beta-hmi.bin` first, address 0x0
 
 * Compile and download
 
@@ -25,7 +25,7 @@ The LCD needs to use 8-wire mode, so the third resistor needs to be moved to the
 
 ## LCD Sub-Board
 
-IO number: 18 + 2 (I2C)
+IO number: 10 + 2 (I2C)
 
 HMI demo uses 8 bit parallel mode
 LCD touch uses I2C interface and can reuse 2 IO
