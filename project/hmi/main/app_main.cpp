@@ -135,8 +135,6 @@ static void gui_tick_task(void * arg)
 
 void gui_task(void *arg)
 {
-    // lcd_init();
-
     xTaskCreate(gui_tick_task, "gui_tick_task", 512, NULL, 10, NULL);
 
     lv_init();
@@ -270,7 +268,6 @@ extern "C" void app_main()
                 take_fram_lock();
                 gui_set_camera(fbuf, FRAM_WIDTH*FRAM_HIGH*2, portMAX_DELAY);
                 give_fram_lock();
-                // printf("done\n");
             } else {
                 vTaskDelay(1000 / portTICK_PERIOD_MS);
             }
