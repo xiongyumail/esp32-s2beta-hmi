@@ -1,45 +1,60 @@
-# ESP32-S2Beta-HMI
+# _ESP32-S2Beta-HMI_
 
-ESP32-S2Beta-HMI： HMI evaluation suite for new low power, low cost and secure Internet of Things chip ESP32-S2. ESP32-S2 chip is equipped with Xtensa 32-bit LX7 single-core processor.
+_HMI evaluation suite for new low power, low cost and secure Internet of Things chip ESP32-S2. ESP32-S2 chip is equipped with Xtensa 32-bit LX7 single-core processor.
 Working frequency up to 240 MHz, providing a wealth of peripheral interfaces, including SPI, I2S, UART, I2C, LED PWM, PCNT, LCD interface, Camera interface, ADC, DAC,
 Touch sensors, temperature sensors and up to 43 GPIOs. Supports high-resolution LCD displays and Camera Sensor, as well as a variety of extension options.
-Perfectly supports open source GUI LittleVGL, providing a large number of rich and easy-to-use GUI components and design examples.
+Perfectly supports open source GUI LittleVGL, providing a large number of rich and easy-to-use GUI components and design examples._
 
-Key features:
-* High Definition Resolution: 800x480 4.3 inch
-* Multiple interfaces: 8080, 6800, SPI
-* Easy to use and beautiful GUI: LittleVGL
-* Powerful and rich graphics components: buttons, charts, lists, sliders, images, etc.
-* A large number of sensor drivers: WS2812, MPU6050, HTS221, BH170, ES8311, OV2640 etc.
-* Multiple GUI examples: RGB LED Color picker, MPU6050 Data Curve, A simple piano, Simple Terminal, etc.
 
-esptool 添加gitlab仓库
+* Development board Structure
 
-idf.py -DIDF_TARGET=esp32s2beta build flash
+  ![Board](data/Structure.png)
 
-I2C:
-SW5 4 TH_GPIO3 EXT_GPIO3
-SW5 6 TH_GPIO5 EXT_GPIO5
+  * High Definition Resolution: 800x480 4.3 inch
 
-# _ESP32-S2Beta-HMI_
+  * Multiple interfaces: 8080, 6800, SPI
+
+  * Easy to use and beautiful GUI: LittleVGL
+
+  * Powerful and rich graphics components: buttons, charts, lists, sliders, images, etc.
+
+  * A large number of sensor drivers: WS2812, MPU6050, HTS221, BH170, ES8311, OV2640 etc.
+
+  * Multiple GUI examples: RGB LED Color picker, MPU6050 Data Curve, A simple piano, Simple Terminal, etc.
 
 ## Contents
 
 * Directory tree
 
     ```
-
+    ├── add_path.sh
+    ├── data
+    ├── project
+    │   ├── audio
+    │   ├── hmi
+    │   ├── pcb
+    │   └── piano
+    ├── README.md
+    └── tools
+        ├── esp-idf
+        └── xtensa-esp32s2-elf
     ```
 
     * project
 
+      Development examples
+
     * tools
 
-      * script
+      * ESP32-S2 sdk
 
-      * sdk
+      * ESP32-S2 toolchain
 
-      * toolchain
+    * Data
+
+      * Schematic diagram
+
+      * Misc
 
 ## How to use
 
@@ -48,6 +63,8 @@ You can follow the steps below to set up the development environment, or directl
 * clone
 
   ```bash
+  git clone --recursive https://gitlab.espressif.cn:6688/yxiong/esp32-s2beta-hmi
+  cd esp32-s2beta-hmi
   ```
 
   * note
@@ -61,30 +78,25 @@ You can follow the steps below to set up the development environment, or directl
   git submodule update --init --recursive
   ```
 
-* Add environment variables
+* Get toolchain
 
-  ```bash
-  . add_path.sh
-  ```
-  * note
+  xtensa-esp32s2-elf
 
-    Don't forget `"."`
+  * [Windows](https://dl.espressif.com/dl/toolchains/preview/xtensa-esp32s2-elf-gcc8_2_0-esp32s2-dev-4-g3a626e-win32.zip)
+  * [Mac](https://dl.espressif.com/dl/toolchains/preview/xtensa-esp32s2-elf-gcc8_2_0-esp32s2-dev-4-g3a626e-macos.tar.gz)
+  * [Linux(64)](https://dl.espressif.com/dl/toolchains/preview/xtensa-esp32s2-elf-gcc8_2_0-esp32s2-dev-4-g3a626e-linux-amd64.tar.gz)
+  * [Linux(32)](https://dl.espressif.com/dl/toolchains/preview/xtensa-esp32s2-elf-gcc8_2_0-esp32s2-dev-4-g3a626e-linux-i686.tar.gz)
 
 * Install toolchain
 
-  * ESP32-S2Beta
-
-    * Ubuntu/Debian/Kali/Arch
-
-      ```bash
-      ```
-
-## Release
-
-* download
+  Example: Linux(64)
 
   ```bash
+  wget https://dl.espressif.com/dl/toolchains/preview/xtensa-esp32s2-elf-gcc8_2_0-esp32s2-dev-4-g3a626e-linux-amd64.tar.gz
+  tar zxvf xtensa-esp32s2-elf-gcc8_2_0-esp32s2-dev-4-g3a626e-linux-amd64.tar.gz -C tools/
+  rm xtensa-esp32s2-elf-gcc8_2_0-esp32s2-dev-4-g3a626e-linux-amd64.tar.gz
   ```
+
 * Add environment variables
 
   ```bash
@@ -92,8 +104,25 @@ You can follow the steps below to set up the development environment, or directl
   ```
   * note
 
-    Don't forget `"."`
+    Don't omit `"."`
 
-## License
+## Appendix
 
-## Contributing
+### Schematic
+
+* [Main Board](data/SCH_ESP32-S2-HMI_V1_20190528A.pdf)
+
+* [LCD Board](data/SCH_ESP32-S2-HMI-LCD_V1_0_20190611A.pdf)
+
+* [Audio Board](data/audio.pdf)
+
+* [Touch Board](data/TOUCH.pdf)
+
+### Datasheet
+
+* [ESP32-S2](data/esp32-s2_datasheet_en.pdf)
+
+* [LCD-NT35510](data/LCD_NT35510.pdf)
+
+* [CAM-OV2640](data/LCD_NT35510.pdf)
+

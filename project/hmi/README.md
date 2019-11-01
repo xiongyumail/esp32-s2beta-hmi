@@ -1,11 +1,33 @@
-## LCD子板
-IO数量: 18 + 2(I2C)
+# _HMI_
 
-HMI Demo使用了16位并行模式
-LCD Touch 使用I2C接口，可以复用 2 IO
-原理图中LCD_RST和BL_CTR要注意保持拉高，其它引脚可留空
+![HMI](pic/HMI.jpeg)
 
-![LCD_Socket](LCD_Socket.png)
+
+## How to use
+
+* Compile and download
+
+```bash
+idf.py -DIDF_TARGET=esp32s2beta build flash
+```
+
+When using this example, the dial switch needs to be in the following status
+
+![Switch status](pic/switch.jpeg)
+
+The LCD needs to use 8-wire mode, so the third resistor needs to be moved to the second pad
+
+![LCD 8 wire](pic/lcd_8wire.jpeg)
+
+## LCD Sub-Board
+
+IO number: 18 + 2 (I2C)
+
+HMI demo uses 8 bit parallel mode
+LCD touch uses I2C interface and can reuse 2 IO
+Pay attention to keep LCD RST and BL CTR high in schematic diagram, and leave other pins blank
+
+![LCD_Socket](pic/LCD_Socket.png)
 
 ```
 #define  WR  GPIO_NUM_34
@@ -18,16 +40,36 @@ LCD Touch 使用I2C接口，可以复用 2 IO
 #define  D5  GPIO_NUM_41
 #define  D6  GPIO_NUM_40
 #define  D7  GPIO_NUM_45
-#define  D8   GPIO_NUM_21
-#define  D9   GPIO_NUM_18
-#define  D10  GPIO_NUM_17
-#define  D11  GPIO_NUM_16
-#define  D12  GPIO_NUM_15
-#define  D13  GPIO_NUM_14
-#define  D14  GPIO_NUM_13
-#define  D15  GPIO_NUM_12
 
 #define SDA (GPIO_NUM_3)
 #define SCL (GPIO_NUM_5)
+```
+
+## Camera Sub-Board
+
+IO number: 12 + 2 (I2C)
+
+I2C used by camera should be provided independently
+
+![Camera](pic/Camera_Socket.png)
+
+```
+#define D0 GPIO_NUM_18
+#define D2 GPIO_NUM_17
+#define D4 GPIO_NUM_8
+#define D6 GPIO_NUM_10
+
+#define D1 GPIO_NUM_21
+#define D3 GPIO_NUM_7
+#define D5 GPIO_NUM_9
+#define D7 GPIO_NUM_11
+
+#define XCLK  GPIO_NUM_0
+#define PCLK  GPIO_NUM_12
+#define VSYNC GPIO_NUM_14
+#define HSYNC GPIO_NUM_13
+
+#define SIOC   GPIO_NUM_16
+#define SIOD   GPIO_NUM_15
 ```
 
