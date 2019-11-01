@@ -30,10 +30,7 @@ Perfectly supports open source GUI LittleVGL, providing a large number of rich a
     ├── add_path.sh
     ├── data
     ├── project
-    │   ├── audio
-    │   ├── hmi
-    │   ├── pcb
-    │   └── piano
+    │   └── hmi
     ├── README.md
     └── tools
         ├── esp-idf

@@ -5,7 +5,11 @@
 
 ## How to use
 
+You can try the full firmware `esp32-s2beta-hmi.bin` first, and write the address 0x0
+
 * Compile and download
+
+Please unplug the camera module before downloading the code!!!
 
 ```bash
 idf.py -DIDF_TARGET=esp32s2beta build flash
