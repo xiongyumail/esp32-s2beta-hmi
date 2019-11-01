@@ -28,6 +28,7 @@
 #include "lcd_cam.h"
 #include "ft5x06.h"
 #include "gui.h"
+#include "ov2640.h"
 #include "fram_cfg.h"
 
 static const char *TAG = "main";
@@ -134,8 +135,6 @@ static void gui_tick_task(void * arg)
 
 void gui_task(void *arg)
 {
-    // lcd_init();
-
     xTaskCreate(gui_tick_task, "gui_tick_task", 512, NULL, 10, NULL);
 
     lv_init();
@@ -184,11 +183,13 @@ void camera_hw_init(void)
 {
     cam_xclk_attach();
     ets_delay_us(200000);
-    if (sccb_slave_prob() == -1) {
-        printf("---slave prob fail\n");
+    if (OV2640_Init(0, 1) == 1) {
         return;
     }
-    camera_reg_cfg();
+	OV2640_RGB565_Mode(false);	//RGB565模式
+    OV2640_ImageSize_Set(800, 600);
+    OV2640_ImageWin_Set(0, 0, 800, 600);
+  	OV2640_OutSize_Set(FRAM_WIDTH, FRAM_HIGH); 
     printf("camera init done\n");
     fbuf = cam_attach();
     cam_start();
@@ -265,11 +266,10 @@ extern "C" void app_main()
             
             if (GUI_PAGE_CAMERA == gui_get_page()) {
                 take_fram_lock();
-                gui_set_camera(fbuf, FRAM_WIDTH*FRAM_HIGH*2, 100 /portTICK_PERIOD_MS);
+                gui_set_camera(fbuf, FRAM_WIDTH*FRAM_HIGH*2, portMAX_DELAY);
                 give_fram_lock();
-                // printf("done\n");
             } else {
-                vTaskDelay(100 / portTICK_PERIOD_MS);
+                vTaskDelay(1000 / portTICK_PERIOD_MS);
             }
         }
     }

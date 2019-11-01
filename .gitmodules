@@ -7,9 +7,6 @@
 [submodule "project/components/MPUdriver"]
 	path = project/hmi/components/MPUdriver
 	url = https://github.com/natanaeljr/esp32-MPU-driver.git
-[submodule "project/pcb/kicad-lib"]
-	path = project/pcb/kicad-lib
-	url = https://github.com/xiongyumail/kicad-lib
 [submodule "tools/esp-idf"]
 	path = tools/esp-idf
 	url = https://github.com/espressif/esp-idf.git
