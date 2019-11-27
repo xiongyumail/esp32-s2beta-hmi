@@ -14,6 +14,7 @@
 /* clang-format off */
 
 #include <stdint.h>
+#include "esp_system.h"
 
 /*====================
    Graphical settings
@@ -179,10 +180,10 @@ typedef void * lv_img_decoder_user_data_t;
  *  Compiler settings
  *====================*/
 /* Define a custom attribute to `lv_tick_inc` function */
-#define LV_ATTRIBUTE_TICK_INC
+#define LV_ATTRIBUTE_TICK_INC IRAM_ATTR
 
 /* Define a custom attribute to `lv_task_handler` function */
-#define LV_ATTRIBUTE_TASK_HANDLER
+#define LV_ATTRIBUTE_TASK_HANDLER IRAM_ATTR
 
 /* With size optimization (-Os) the compiler might not align data to
  * 4 or 8 byte boundary. This alignment will be explicitly applied where needed.
@@ -192,12 +193,6 @@ typedef void * lv_img_decoder_user_data_t;
 /* Attribute to mark large constant arrays for example
  * font's bitmaps */
 #define LV_ATTRIBUTE_LARGE_CONST
-
-/* 1: Variable length array is supported*/
-#define LV_COMPILER_VLA_SUPPORTED            1
-
-/* 1: Initialization with non constant values are supported */
-#define LV_COMPILER_NON_CONST_INIT_SUPPORTED 1
 
 /*===================
  *  HAL settings
@@ -226,6 +221,7 @@ typedef void * lv_indev_drv_user_data_t;            /*Type of user data in the i
  * LV_LOG_LEVEL_INFO        Log important events
  * LV_LOG_LEVEL_WARN        Log if something unwanted happened but didn't cause a problem
  * LV_LOG_LEVEL_ERROR       Only critical issue, when the system may fail
+ * LV_LOG_LEVEL_NONE        Do not log anything
  */
 #  define LV_LOG_LEVEL    LV_LOG_LEVEL_WARN
 
@@ -239,14 +235,14 @@ typedef void * lv_indev_drv_user_data_t;            /*Type of user data in the i
  *================*/
 #define LV_THEME_LIVE_UPDATE    0   /*1: Allow theme switching at run time. Uses 8..10 kB of RAM*/
 
-#define LV_USE_THEME_TEMPL      1   /*Just for test*/
-#define LV_USE_THEME_DEFAULT    1   /*Built mainly from the built-in styles. Consumes very few RAM*/
-#define LV_USE_THEME_ALIEN      1   /*Dark futuristic theme*/
-#define LV_USE_THEME_NIGHT      1   /*Dark elegant theme*/
-#define LV_USE_THEME_MONO       1   /*Mono color theme for monochrome displays*/
+#define LV_USE_THEME_TEMPL      0   /*Just for test*/
+#define LV_USE_THEME_DEFAULT    0   /*Built mainly from the built-in styles. Consumes very few RAM*/
+#define LV_USE_THEME_ALIEN      0   /*Dark futuristic theme*/
+#define LV_USE_THEME_NIGHT      0   /*Dark elegant theme*/
+#define LV_USE_THEME_MONO       0   /*Mono color theme for monochrome displays*/
 #define LV_USE_THEME_MATERIAL   1   /*Flat theme with bold colors and light shadows*/
-#define LV_USE_THEME_ZEN        1   /*Peaceful, mainly light theme */
-#define LV_USE_THEME_NEMO       1   /*Water-like theme based on the movie "Finding Nemo"*/
+#define LV_USE_THEME_ZEN        0   /*Peaceful, mainly light theme */
+#define LV_USE_THEME_NEMO       0   /*Water-like theme based on the movie "Finding Nemo"*/
 
 /*==================
  *    FONT USAGE
@@ -257,10 +253,17 @@ typedef void * lv_indev_drv_user_data_t;            /*Type of user data in the i
  * More info about fonts: https://docs.littlevgl.com/#Fonts
  * To create a new font go to: https://littlevgl.com/ttf-font-to-c-array
  */
+
+/* Robot fonts with bpp = 4
+ * https://fonts.google.com/specimen/Roboto  */
 #define LV_FONT_ROBOTO_12    0
 #define LV_FONT_ROBOTO_16    1
 #define LV_FONT_ROBOTO_22    1
 #define LV_FONT_ROBOTO_28    1
+
+/*Pixel perfect monospace font
+ * http://pelulamu.net/unscii/ */
+#define LV_FONT_UNSCII_8     1
 
 /* Optionally declare your custom fonts here.
  * You can use these fonts as default font too
@@ -272,6 +275,11 @@ typedef void * lv_indev_drv_user_data_t;            /*Type of user data in the i
 
 /*Always set a default font from the built-in fonts*/
 #define LV_FONT_DEFAULT        &lv_font_roboto_16
+
+/* Enable it if you have fonts with a lot of characters.
+ * The limit depends on the font size, font face and bpp
+ * but with > 10,000 characters if you see issues probably you need to enable it.*/
+#define LV_FONT_FMT_TXT_LARGE   0
 
 /*Declare the type of the user data of fonts (can be e.g. `void *`, `int`, `struct`)*/
 typedef void * lv_font_user_data_t;
@@ -324,7 +332,7 @@ typedef void * lv_obj_user_data_t;
 #define LV_USE_BTN      1
 #if LV_USE_BTN != 0
 /*Enable button-state animations - draw a circle on click (dependencies: LV_USE_ANIMATION)*/
-#  define LV_BTN_INK_EFFECT   1
+#  define LV_BTN_INK_EFFECT   0
 #endif
 
 /*Button matrix (dependencies: -)*/

@@ -7,6 +7,7 @@ set(COMPONENT_SRCDIRS "lvgl/src/lv_core"
                       "lvgl/src/lv_draw")
 set(COMPONENT_ADD_INCLUDEDIRS "." 
                               "lvgl"
+                              "lvgl/src"
                               "lvgl/src/lv_core"
                               "lvgl/src/lv_hal"
                               "lvgl/src/lv_objx"

@@ -30,6 +30,7 @@
 #include "gui.h"
 #include "ov2640.h"
 #include "fram_cfg.h"
+#include "esp_lua.h"
 
 static const char *TAG = "main";
 
@@ -177,6 +178,43 @@ void gui_task(void *arg)
     }
 }
 
+
+/* 测试的Lua代码字符串 */
+const char lua_test1[] = { 
+    "print(\"Hello,I am lua!\\n--this is newline printf\")\n"
+};
+
+/* 测试的Lua代码字符串 */
+const char lua_test2[] = { 
+    "function foo()\n"
+    "  local i = 0\n"
+    "  local sum = 1\n"
+    "  while i <= 10 do\n"
+    "    sum = sum * 2\n"
+    "    i = i + 1\n"
+    "  end\n"
+    "return sum\n"
+    "end\n"
+    "print(\"sum =\", foo())\n"
+    "print(\"and sum = 2^11 =\", 2 ^ 11)\n"
+    "print(\"exp(200) =\", math.exp(200))\n"
+};
+
+void lua_task(void *arg)
+{
+    char input_buffer[512];
+    esp_lua_init();
+    esp_lua_read(lua_test1, sizeof(char), strlen(lua_test1));
+    while(1) {
+        while ((fgets (input_buffer, 512, stdin)) != NULL) {
+            printf(input_buffer);
+            // printf("\n");
+            esp_lua_read(input_buffer, sizeof(char), strlen(input_buffer));
+        }
+        vTaskDelay(10 / portTICK_RATE_MS);
+    }
+}
+
 static uint8_t *fbuf = NULL;
 
 void camera_hw_init(void)
@@ -257,6 +295,8 @@ extern "C" void app_main()
     xTaskCreate(printTask, "printTask", 2 * 1024, nullptr, 5, nullptr);
 
     xTaskCreate(gui_task, "gui_task", 4096, NULL, 5, NULL);
+
+    // xTaskCreate(lua_task, "lua_task", 4096, NULL, 5, NULL);
 
     vTaskDelay(1000 /portTICK_RATE_MS);
     // wifi_init();

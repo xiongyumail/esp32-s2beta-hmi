@@ -12,6 +12,7 @@
 #include "WS2812B.h"
 #include "fram_cfg.h"
 #include "ov2640.h"
+#include "esp_lua.h"
 
 typedef struct {
     int event;
@@ -595,6 +596,9 @@ static void keyboard_event_cb(lv_obj_t * keyboard, lv_event_t event)
     }
 }
 
+char str_line[128];
+int str_pos = 0;
+
 static void text_area_event_handler(lv_obj_t * text_area, lv_event_t event)
 {
     (void) text_area;    /*Unused*/
@@ -629,6 +633,17 @@ static void text_area_event_handler(lv_obj_t * text_area, lv_event_t event)
             lv_anim_create(&a);
 #endif
         }
+    } else if(event == LV_EVENT_INSERT) {
+        const char * str = lv_event_get_data();
+        if(str[0] == '\n') {
+            str_line[str_pos++] = str[0];
+            str_line[str_pos++] = '\0';
+            printf("Ready: %s\n", str_line);
+            esp_lua_read(str_line, sizeof(char), strlen(str_line)+1); 
+            str_pos = 0;
+        } else {
+            str_line[str_pos++] = (char)str[0];
+        }
     }
 
 }
@@ -650,15 +665,16 @@ static void body_page_terminal(lv_obj_t * parent)
     lv_ta_set_cursor_type(terminal_ta, LV_CURSOR_BLOCK);
     lv_obj_set_event_cb(terminal_ta, text_area_event_handler);
     lv_ta_set_text_sel(terminal_ta, true);
-    lv_ta_set_text(terminal_ta, "[esp@localhost ~]$ cd esp\n"
-                       "[esp@localhost ~/esp]$ ls\n"
-                       "esp-idf xtensa-esp32s2-elf\n"
-                       "[esp@localhost ~/esp]$ ");
+    lv_ta_set_cursor_click_pos(terminal_ta, false);
+    lv_ta_set_scroll_propagation(terminal_ta, true);
+    lv_ta_set_text(terminal_ta, "Lua 5.3.5  Copyright (C) 1994-2018 Lua.org, PUC-Rio\n"
+                                ">");
 
     terminal_kb = lv_kb_create(h, NULL);
     lv_obj_set_size(terminal_kb, 520, 180);
     lv_obj_align(terminal_kb, terminal_ta, LV_ALIGN_OUT_BOTTOM_RIGHT, 0, LV_DPI);
     lv_kb_set_ta(terminal_kb, terminal_ta);
+    lv_kb_set_cursor_manage(terminal_kb, false);
     lv_obj_set_event_cb(terminal_kb, keyboard_event_cb);
 }
 
@@ -1128,6 +1144,7 @@ gui_page_t gui_get_page()
 
 void gui_init(lv_theme_t * th)
 {
+    esp_lua_init();
     gui_event_queue = xQueueCreate(5, sizeof(gui_event_t));
     lv_theme_set_current(th);
     th = lv_theme_get_current();    /*If `LV_THEME_LIVE_UPDATE  1` `th` is not used directly so get the real theme after set*/

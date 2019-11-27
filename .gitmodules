@@ -10,3 +10,15 @@
 [submodule "tools/esp-idf"]
 	path = tools/esp-idf
 	url = https://github.com/espressif/esp-idf.git
+[submodule "projects/hmi/components/MPUdriver"]
+	path = projects/hmi/components/MPUdriver
+	url = https://github.com/natanaeljr/esp32-MPU-driver.git
+[submodule "projects/hmi/components/I2Cbus"]
+	path = projects/hmi/components/I2Cbus
+	url = https://github.com/natanaeljr/esp32-I2Cbus.git
+[submodule "projects/hmi/components/littlevgl/lvgl"]
+	path = projects/hmi/components/littlevgl/lvgl
+	url = https://github.com/littlevgl/lvgl.git
+[submodule "projects/hmi/components/lua"]
+	path = projects/hmi/components/lua
+	url = https://github.com/xiongyumail/esp32_lua

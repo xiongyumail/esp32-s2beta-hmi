@@ -8,7 +8,7 @@ Perfectly supports open source GUI LittleVGL, providing a large number of rich a
 
 * Development board Structure
 
-  ![Board](data/Structure.png)
+  ![Board](docs/Structure.png)
 
   * High Definition Resolution: 800x480 4.3 inch
 
@@ -28,8 +28,8 @@ Perfectly supports open source GUI LittleVGL, providing a large number of rich a
 
     ```
     ├── add_path.sh
-    ├── data
-    ├── project
+    ├── docs
+    ├── projects
     │   └── hmi
     ├── README.md
     └── tools
@@ -37,7 +37,7 @@ Perfectly supports open source GUI LittleVGL, providing a large number of rich a
         └── xtensa-esp32s2-elf
     ```
 
-    * project
+    * projects
 
       Development examples
 
@@ -75,23 +75,11 @@ You can follow the steps below to set up the development environment, or directl
   git submodule update --init --recursive
   ```
 
-* Get toolchain
-
-  xtensa-esp32s2-elf
-
-  * [Windows](https://dl.espressif.com/dl/toolchains/preview/xtensa-esp32s2-elf-gcc8_2_0-esp32s2-dev-4-g3a626e-win32.zip)
-  * [Mac](https://dl.espressif.com/dl/toolchains/preview/xtensa-esp32s2-elf-gcc8_2_0-esp32s2-dev-4-g3a626e-macos.tar.gz)
-  * [Linux(64)](https://dl.espressif.com/dl/toolchains/preview/xtensa-esp32s2-elf-gcc8_2_0-esp32s2-dev-4-g3a626e-linux-amd64.tar.gz)
-  * [Linux(32)](https://dl.espressif.com/dl/toolchains/preview/xtensa-esp32s2-elf-gcc8_2_0-esp32s2-dev-4-g3a626e-linux-i686.tar.gz)
-
 * Install toolchain
 
-  Example: Linux(64)
-
   ```bash
-  wget https://dl.espressif.com/dl/toolchains/preview/xtensa-esp32s2-elf-gcc8_2_0-esp32s2-dev-4-g3a626e-linux-amd64.tar.gz
-  tar zxvf xtensa-esp32s2-elf-gcc8_2_0-esp32s2-dev-4-g3a626e-linux-amd64.tar.gz -C tools/
-  rm xtensa-esp32s2-elf-gcc8_2_0-esp32s2-dev-4-g3a626e-linux-amd64.tar.gz
+  ./tools/esp-idf/install.sh
+  . ./tools/esp-idf/export.sh
   ```
 
 * Add environment variables
@@ -107,19 +95,19 @@ You can follow the steps below to set up the development environment, or directl
 
 ### Schematic
 
-* [Main Board](data/SCH_ESP32-S2-HMI_V1_20190528A.pdf)
+* [Main Board](docs/SCH_ESP32-S2-HMI_V1_20190528A.pdf)
 
-* [LCD Board](data/SCH_ESP32-S2-HMI-LCD_V1_0_20190611A.pdf)
+* [LCD Board](docs/SCH_ESP32-S2-HMI-LCD_V1_0_20190611A.pdf)
 
-* [Audio Board](data/audio.pdf)
+* [Audio Board](docs/audio.pdf)
 
-* [Touch Board](data/TOUCH.pdf)
+* [Touch Board](docs/TOUCH.pdf)
 
 ### Datasheet
 
-* [ESP32-S2](data/esp32-s2_datasheet_en.pdf)
+* [ESP32-S2](docs/esp32-s2_datasheet_en.pdf)
 
-* [LCD-NT35510](data/LCD_NT35510.pdf)
+* [LCD-NT35510](docs/LCD_NT35510.pdf)
 
-* [CAM-OV2640](data/LCD_NT35510.pdf)
+* [CAM-OV2640](docs/LCD_NT35510.pdf)
 

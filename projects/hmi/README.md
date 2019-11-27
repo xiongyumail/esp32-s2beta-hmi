@@ -12,7 +12,8 @@ You can try the full firmware `esp32-s2beta-hmi.bin` first, address 0x0
 Please unplug the camera module before downloading the code!!!
 
 ```bash
-idf.py -DIDF_TARGET=esp32s2beta build flash
+idf.py set-target esp32s2beta
+idf.py build flash monitor
 ```
 
 When using this example, the dial switch needs to be in the following status
