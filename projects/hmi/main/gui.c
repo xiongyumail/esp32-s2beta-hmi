@@ -12,7 +12,10 @@
 #include "WS2812B.h"
 #include "fram_cfg.h"
 #include "ov2640.h"
+#include "esp_log.h"
 #include "esp_lua.h"
+
+static const char *TAG = "gui";
 
 typedef struct {
     int event;
@@ -25,6 +28,7 @@ typedef struct {
 #define GUI_SENSOR_EVENT 3
 #define GUI_MOTION_EVENT 3
 #define GUI_CAMERA_EVENT 4
+#define GUI_TERMINAL_EVENT 5
 
 typedef struct {
     float temp;
@@ -387,7 +391,7 @@ static void led_event_cb(lv_obj_t * obj, lv_event_t event)
             } else {
                 WS2812B_setLeds(&led_rgb, 1);
             }
-            printf("led state: %s\n", (lv_led_get_bright(obj) == 255 ?  "on" : "off" ));
+            ESP_LOGI(TAG,"led state: %s\n", (lv_led_get_bright(obj) == 255 ?  "on" : "off" ));
         break;
     }
 }
@@ -554,8 +558,12 @@ static void body_page_camera(lv_obj_t * parent)
     
 }
 
-lv_obj_t * terminal_ta;
-lv_obj_t * terminal_kb;
+lv_obj_t * terminal_ta = NULL;
+lv_obj_t * terminal_ta_dis = NULL;
+lv_obj_t * terminal_kb = NULL;
+char *terminal_buffer = NULL;
+
+gui_terminal_callback_t terminal_cb = NULL;
 
 // #undef LV_USE_ANIMATION
 #if LV_USE_ANIMATION
@@ -596,53 +604,50 @@ static void keyboard_event_cb(lv_obj_t * keyboard, lv_event_t event)
     }
 }
 
-char str_line[128];
-int str_pos = 0;
 
 static void text_area_event_handler(lv_obj_t * text_area, lv_event_t event)
 {
-    (void) text_area;    /*Unused*/
+    if (text_area == terminal_ta_dis) {
+        /*Text area is on the scrollable part of the page but we need the page itself*/
+        lv_obj_t * parent = lv_obj_get_parent(terminal_ta_dis);
 
-    /*Text area is on the scrollable part of the page but we need the page itself*/
-    lv_obj_t * parent = lv_obj_get_parent(terminal_ta);
+        if(event == LV_EVENT_CLICKED) {
+            if(terminal_kb == NULL) {
+                terminal_kb = lv_kb_create(parent, NULL);
+                lv_obj_set_size(terminal_kb, 520, 180);
+                lv_obj_align(terminal_kb, terminal_ta_dis, LV_ALIGN_OUT_BOTTOM_RIGHT, 0, LV_DPI);
+                lv_kb_set_ta(terminal_kb, terminal_ta);
+                lv_obj_set_event_cb(terminal_kb, keyboard_event_cb);
 
-    if(event == LV_EVENT_CLICKED) {
-        if(terminal_kb == NULL) {
-            printf("test\n");
-            terminal_kb = lv_kb_create(parent, NULL);
-            lv_obj_set_size(terminal_kb, 520, 180);
-            lv_obj_align(terminal_kb, terminal_ta, LV_ALIGN_OUT_BOTTOM_RIGHT, 0, LV_DPI);
-            lv_kb_set_ta(terminal_kb, terminal_ta);
-            lv_obj_set_event_cb(terminal_kb, keyboard_event_cb);
-
-#if LV_USE_ANIMATION
-            lv_anim_t a;
-            a.var = terminal_kb;
-            a.start = LV_VER_RES;
-            a.end = lv_obj_get_y(terminal_kb);
-            a.exec_cb = (lv_anim_exec_xcb_t)lv_obj_set_y;
-            a.path_cb = lv_anim_path_linear;
-            a.ready_cb = NULL;
-            a.act_time = 0;
-            a.time = 300;
-            a.playback = 0;
-            a.playback_pause = 0;
-            a.repeat = 0;
-            a.repeat_pause = 0;
-            a.user_data = NULL;
-            lv_anim_create(&a);
-#endif
-        }
-    } else if(event == LV_EVENT_INSERT) {
-        const char * str = lv_event_get_data();
-        if(str[0] == '\n') {
-            str_line[str_pos++] = str[0];
-            str_line[str_pos++] = '\0';
-            printf("Ready: %s\n", str_line);
-            esp_lua_read(str_line, sizeof(char), strlen(str_line)+1); 
-            str_pos = 0;
-        } else {
-            str_line[str_pos++] = (char)str[0];
+    #if LV_USE_ANIMATION
+                lv_anim_t a;
+                a.var = terminal_kb;
+                a.start = LV_VER_RES;
+                a.end = lv_obj_get_y(terminal_kb);
+                a.exec_cb = (lv_anim_exec_xcb_t)lv_obj_set_y;
+                a.path_cb = lv_anim_path_linear;
+                a.ready_cb = NULL;
+                a.act_time = 0;
+                a.time = 300;
+                a.playback = 0;
+                a.playback_pause = 0;
+                a.repeat = 0;
+                a.repeat_pause = 0;
+                a.user_data = NULL;
+                lv_anim_create(&a);
+    #endif
+            }
+        } 
+    } else if (text_area == terminal_ta) {
+        if(event == LV_EVENT_INSERT) {
+            const char * str = lv_event_get_data();
+            if (terminal_cb) {
+                if (str[0] == 127) { // backspace
+                   terminal_cb("\b", 2); 
+                } else {
+                    terminal_cb(str, 2);
+                }
+            }
         }
     }
 
@@ -650,6 +655,10 @@ static void text_area_event_handler(lv_obj_t * text_area, lv_event_t event)
 
 static void body_page_terminal(lv_obj_t * parent)
 {
+    if (terminal_buffer == NULL) {
+        terminal_buffer = (char *)heap_caps_malloc(512, MALLOC_CAP_SPIRAM);
+    }
+
     lv_obj_t * h = lv_cont_create(parent, NULL);
     lv_obj_set_click(h, true);
     lv_cont_set_fit(h, LV_FIT_TIGHT);
@@ -660,22 +669,29 @@ static void body_page_terminal(lv_obj_t * parent)
     style.text.color = LV_COLOR_GREEN;
 
     terminal_ta = lv_ta_create(h, NULL);
-    lv_obj_set_size(terminal_ta, 520, 200);
-    lv_obj_align(terminal_ta, NULL, LV_ALIGN_IN_TOP_RIGHT, -LV_DPI / 10, LV_DPI / 10);
-    lv_ta_set_cursor_type(terminal_ta, LV_CURSOR_BLOCK);
+    // It's stupid. I just want to get the characters I input, but I don't directly display them on the terminal. 
+    // I can't get the characters frome the keyboard_event_cb, so I have to create a hidden fool
+    lv_obj_set_hidden(terminal_ta, 1);
     lv_obj_set_event_cb(terminal_ta, text_area_event_handler);
-    lv_ta_set_text_sel(terminal_ta, true);
-    lv_ta_set_cursor_click_pos(terminal_ta, false);
-    lv_ta_set_scroll_propagation(terminal_ta, true);
-    lv_ta_set_text(terminal_ta, "Lua 5.3.5  Copyright (C) 1994-2018 Lua.org, PUC-Rio\n"
-                                ">");
+
+    terminal_ta_dis = lv_ta_create(h, NULL);
+    lv_obj_set_size(terminal_ta_dis, 520, 200);
+    lv_obj_align(terminal_ta_dis, NULL, LV_ALIGN_IN_TOP_RIGHT, -LV_DPI / 10, LV_DPI / 10);
+    lv_ta_set_cursor_type(terminal_ta_dis, LV_CURSOR_BLOCK);
+    lv_obj_set_event_cb(terminal_ta_dis, text_area_event_handler);
+    lv_ta_set_text_sel(terminal_ta_dis, true);
+    lv_ta_set_cursor_click_pos(terminal_ta_dis, false);
+    lv_ta_set_scroll_propagation(terminal_ta_dis, true);
+    lv_ta_set_text(terminal_ta_dis, "[esp@localhost ~]$ ./lua");
 
     terminal_kb = lv_kb_create(h, NULL);
     lv_obj_set_size(terminal_kb, 520, 180);
-    lv_obj_align(terminal_kb, terminal_ta, LV_ALIGN_OUT_BOTTOM_RIGHT, 0, LV_DPI);
+    lv_obj_align(terminal_kb, terminal_ta_dis, LV_ALIGN_OUT_BOTTOM_RIGHT, 0, LV_DPI);
     lv_kb_set_ta(terminal_kb, terminal_ta);
     lv_kb_set_cursor_manage(terminal_kb, false);
     lv_obj_set_event_cb(terminal_kb, keyboard_event_cb);
+
+    esp_lua_exit(1);
 }
 
 int sockfd = -1;
@@ -703,10 +719,10 @@ static void event_handler(lv_obj_t * obj, lv_event_t event)
         break;
     }
 
-    if (sockfd) {
-        printf(sendline);
-        sendto(sockfd, sendline, strlen(sendline), 0, (struct sockaddr*)&des_addr, sizeof(des_addr));
-    }
+    // if (sockfd) {
+    //     ESP_LOGI(TAG,sendline);
+    //     sendto(sockfd, sendline, strlen(sendline), 0, (struct sockaddr*)&des_addr, sizeof(des_addr));
+    // }
 }
                                   
 static void body_page_audio(lv_obj_t * parent)
@@ -795,27 +811,19 @@ static void body_page_audio(lv_obj_t * parent)
     label = lv_label_create(audio_btn[11], label);
     lv_label_set_text(label, "#A");
 
-    if (sockfd == -1) {
-        sockfd = socket(AF_INET, SOCK_DGRAM, 0);
-        des_addr.sin_family = AF_INET;
-        des_addr.sin_addr.s_addr = inet_addr("192.168.0.255");
-        des_addr.sin_port = htons(9999);
-    }
+    // if (sockfd == -1) {
+    //     sockfd = socket(AF_INET, SOCK_DGRAM, 0);
+    //     des_addr.sin_family = AF_INET;
+    //     des_addr.sin_addr.s_addr = inet_addr("192.168.0.255");
+    //     des_addr.sin_port = htons(9999);
+    // }
 }
 
 static void body_page_info(lv_obj_t * parent)
 {
-    // lv_obj_t * txt = lv_label_create(parent, NULL);
-    // lv_label_set_text(txt, "espressif");
     LV_IMG_DECLARE(espressif);
     lv_obj_t * esp_img = lv_img_create(parent, NULL);
     lv_img_set_src(esp_img, &espressif);
-
-    // /*Create a Page*/
-    // lv_obj_t * page = lv_page_create(parent, NULL);
-    // lv_obj_set_size(page, lv_disp_get_hor_res(NULL) / 3, lv_disp_get_ver_res(NULL) / 2);
-    // lv_obj_set_top(page, true);
-    // lv_obj_align(page, esp_img, LV_ALIGN_IN_TOP_RIGHT,  LV_DPI, LV_DPI);
 
     static lv_style_t style;
     lv_style_copy(&style, &lv_style_scr);
@@ -836,27 +844,27 @@ static void side_btn_event_callback(lv_obj_t * obj, lv_event_t event)
 {
     switch(event) {
         case LV_EVENT_PRESSED:
-            printf("Pressed\n");
+            ESP_LOGI(TAG,"Pressed\n");
             break;
 
         case LV_EVENT_SHORT_CLICKED:
-            printf("Short clicked\n");
+            ESP_LOGI(TAG,"Short clicked\n");
             break;
 
         case LV_EVENT_CLICKED:
-            printf("Clicked\n");
+            ESP_LOGI(TAG,"Clicked\n");
             break;
 
         case LV_EVENT_LONG_PRESSED:
-            printf("Long press\n");
+            ESP_LOGI(TAG,"Long press\n");
             break;
 
         case LV_EVENT_LONG_PRESSED_REPEAT:
-            printf("Long press repeat\n");
+            ESP_LOGI(TAG,"Long press repeat\n");
             break;
 
         case LV_EVENT_RELEASED:
-            printf("Released\n");
+            // ESP_LOGI(TAG,"Released\n");
             if (gui_page != (gui_page_t)obj->user_data) {
                 lv_page_clean(body);
                 gui_page = (gui_page_t)obj->user_data;
@@ -1043,6 +1051,22 @@ static void gui_task(lv_task_t * arg)
                 }
             }
             break;
+
+            case GUI_TERMINAL_EVENT: {
+                if (gui_page == GUI_PAGE_TERMINAL) {
+                    // lv_obj_invalidate(camera_canvas);
+                    for (int x = 0; x < strlen(terminal_buffer); x++) {
+                        if (terminal_buffer[x] == '\b') {
+                            lv_ta_del_char(terminal_ta_dis);
+                        } else if (terminal_buffer[x] == '\r') {
+                            x++;
+                        } else {
+                            lv_ta_add_char(terminal_ta_dis, terminal_buffer[x]);
+                        }
+                    }
+                }
+            }
+            break;
         }
     }
 }
@@ -1137,6 +1161,21 @@ int gui_set_camera(uint8_t* src, size_t len, int ticks_wait)
     return gui_event_send(GUI_CAMERA_EVENT, NULL, ticks_wait);
 }
 
+int gui_add_terminal_text(char* str, size_t len, int ticks_wait) 
+{
+    if (terminal_buffer) {
+        memcpy(terminal_buffer, str, len);
+    }
+    return gui_event_send(GUI_TERMINAL_EVENT, NULL, ticks_wait);
+}
+
+int gui_set_terminal_callback(gui_terminal_callback_t cb) 
+{
+    terminal_cb = cb;
+
+    return 0;
+}
+
 gui_page_t gui_get_page()
 {
     return gui_page;
@@ -1144,7 +1183,6 @@ gui_page_t gui_get_page()
 
 void gui_init(lv_theme_t * th)
 {
-    esp_lua_init();
     gui_event_queue = xQueueCreate(5, sizeof(gui_event_t));
     lv_theme_set_current(th);
     th = lv_theme_get_current();    /*If `LV_THEME_LIVE_UPDATE  1` `th` is not used directly so get the real theme after set*/

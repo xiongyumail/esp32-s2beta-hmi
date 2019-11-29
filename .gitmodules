@@ -19,6 +19,6 @@
 [submodule "projects/hmi/components/littlevgl/lvgl"]
 	path = projects/hmi/components/littlevgl/lvgl
 	url = https://github.com/littlevgl/lvgl.git
-[submodule "projects/hmi/components/lua"]
-	path = projects/hmi/components/lua
-	url = https://github.com/xiongyumail/esp32_lua
+[submodule "projects/hmi/components/esp_lua"]
+	path = projects/hmi/components/esp_lua
+	url = https://github.com/xiongyumail/esp_lua

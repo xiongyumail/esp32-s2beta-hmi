@@ -25,6 +25,8 @@ typedef enum {
     BATTERY_EMPTY
 } gui_battery_value_t;
 
+typedef void (*gui_terminal_callback_t)(char *str, int len);
+
 int gui_set_wifi_state(bool state, int ticks_wait);
 
 int gui_set_time_change(int ticks_wait);
@@ -36,6 +38,10 @@ int gui_set_sensor(float temp, float hum, float light, int ticks_wait);
 int gui_set_motion(float pitch, float roll, float yaw, int ticks_wait);
 
 int gui_set_camera(uint8_t* src, size_t len, int ticks_wait);
+
+int gui_add_terminal_text(char* str, size_t len, int ticks_wait);
+
+int gui_set_terminal_callback(gui_terminal_callback_t cb);
 
 gui_page_t gui_get_page();
 

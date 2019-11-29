@@ -107,7 +107,6 @@ bool IRAM_ATTR disp_input(lv_indev_drv_t * indev_drv, lv_indev_data_t * data)
     } else {
         data->state =  LV_INDEV_STATE_REL;
     }
-    // printf("x: %d, y: %d, state: %d\n", x, y, data->state);
     data->point.x = x;   
     data->point.y = y;
     return false; /*No buffering so no more data read*/
@@ -119,7 +118,7 @@ void memory_monitor(lv_task_t * param)
 
     lv_mem_monitor_t mon;
     lv_mem_monitor(&mon);
-    printf("used: %6d (%3d %%), frag: %3d %%, biggest free: %6d, system free: %d/%d\n", (int)mon.total_size - mon.free_size,
+    ESP_LOGI(TAG, "used: %6d (%3d %%), frag: %3d %%, biggest free: %6d, system free: %d/%d\n", (int)mon.total_size - mon.free_size,
            mon.used_pct,
            mon.frag_pct,
            (int)mon.free_biggest_size,
@@ -134,6 +133,13 @@ static void gui_tick_task(void * arg)
     }
 }
 
+static QueueHandle_t gui_terminal_queue = NULL;
+
+void gui_terminal_callback(char *str, int len)
+{
+    xQueueSend(gui_terminal_queue, &str[0], 100 / portTICK_RATE_MS);
+}
+
 void gui_task(void *arg)
 {
     xTaskCreate(gui_tick_task, "gui_tick_task", 512, NULL, 10, NULL);
@@ -143,9 +149,7 @@ void gui_task(void *arg)
     static lv_disp_buf_t disp_buf;
     static lv_color_t *lv_buf1 = NULL;
     static lv_color_t *lv_buf2 = NULL;
-    // lv_buf = (lv_color_t *)heap_caps_malloc(sizeof(uint16_t) * LV_HOR_RES_MAX * LV_VER_RES_MAX / 200, MALLOC_CAP_DMA);
     lv_buf1 = (lv_color_t *)heap_caps_malloc(sizeof(uint16_t) * LV_HOR_RES_MAX * LV_VER_RES_MAX, MALLOC_CAP_SPIRAM);
-    // lv_buf2 = (lv_color_t *)heap_caps_malloc(sizeof(uint16_t) * LV_HOR_RES_MAX * LV_VER_RES_MAX, MALLOC_CAP_SPIRAM);
     lv_disp_buf_init(&disp_buf, lv_buf1, NULL, LV_HOR_RES_MAX * LV_VER_RES_MAX);
 
     /*Create a display*/
@@ -172,46 +176,70 @@ void gui_task(void *arg)
 
     gui_init(lv_theme_material_init(0, NULL));
 
+    gui_terminal_queue = xQueueCreate(16, sizeof(char));
+    gui_set_terminal_callback(gui_terminal_callback);
     while(1) {
         lv_task_handler();
         vTaskDelay(10 / portTICK_RATE_MS);
     }
 }
 
-
-/* 测试的Lua代码字符串 */
-const char lua_test1[] = { 
-    "print(\"Hello,I am lua!\\n--this is newline printf\")\n"
-};
-
-/* 测试的Lua代码字符串 */
-const char lua_test2[] = { 
-    "function foo()\n"
-    "  local i = 0\n"
-    "  local sum = 1\n"
-    "  while i <= 10 do\n"
-    "    sum = sum * 2\n"
-    "    i = i + 1\n"
-    "  end\n"
-    "return sum\n"
-    "end\n"
-    "print(\"sum =\", foo())\n"
-    "print(\"and sum = 2^11 =\", 2 ^ 11)\n"
-    "print(\"exp(200) =\", math.exp(200))\n"
-};
+FILE *fin = NULL;
+FILE *fout = NULL;
+FILE *ferr = NULL;
+char *fin_buffer = NULL;
+char *fout_buffer = NULL;
+char *ferr_buffer = NULL;
 
 void lua_task(void *arg)
 {
-    char input_buffer[512];
-    esp_lua_init();
-    esp_lua_read(lua_test1, sizeof(char), strlen(lua_test1));
-    while(1) {
-        while ((fgets (input_buffer, 512, stdin)) != NULL) {
-            printf(input_buffer);
-            // printf("\n");
-            esp_lua_read(input_buffer, sizeof(char), strlen(input_buffer));
+    char *ESP_LUA_ARGV[2] = {"./lua", NULL};
+
+    fin_buffer  = (char *)calloc(sizeof(char) + 1, sizeof(char)); // We need check the character one by one.
+    fout_buffer = (char *)calloc(LUA_MAXINPUT + 1, sizeof(char));
+    ferr_buffer = (char *)calloc(LUA_MAXINPUT + 1, sizeof(char));
+    fin  = fmemopen(fin_buffer,  sizeof(char), "r");
+    fout = fmemopen(fout_buffer, LUA_MAXINPUT, "w");
+    ferr = fmemopen(ferr_buffer, LUA_MAXINPUT, "w");
+
+    esp_lua_init(fin, fout, ferr);
+    while (1) {
+        // Clear Screen
+        fprintf(stdout, "\x1b[H\x1b[2J");
+        fprintf(stdout, "[esp@localhost ~]$ ./lua\n");
+        esp_lua_main(1, ESP_LUA_ARGV);
+    }
+
+    fclose(fin);
+    free(fin_buffer);
+    fclose(fout);
+    free(fout_buffer);
+    fclose(ferr);
+    free(ferr_buffer);
+
+    vTaskDelete(NULL);
+}
+
+void stream_task(void *arg)
+{
+    char c[2];
+
+    while (1) { 
+        if (ferr && ftell(ferr)) {
+            fprintf(stderr, ferr_buffer);
+            gui_add_terminal_text(fout_buffer, strlen(fout_buffer) + 1, 10 / portTICK_RATE_MS);
+            rewind (ferr);
+        } else if (fout && ftell(fout)) {
+            fprintf(stdout, fout_buffer);
+            gui_add_terminal_text(fout_buffer, strlen(fout_buffer) + 1, 10 / portTICK_RATE_MS);
+            rewind (fout);
+        } else if (fin && gui_terminal_queue && (fread(c, sizeof(char), 1, stdin) != 0 || xQueueReceive(gui_terminal_queue, &c[0], 0) != pdFAIL)) {
+            c[1] = '\0';
+            sprintf(fin_buffer, c);
+            rewind (fin);
+        } else {
+            vTaskDelay(10 / portTICK_RATE_MS);
         }
-        vTaskDelay(10 / portTICK_RATE_MS);
     }
 }
 
@@ -228,7 +256,7 @@ void camera_hw_init(void)
     OV2640_ImageSize_Set(800, 600);
     OV2640_ImageWin_Set(0, 0, 800, 600);
   	OV2640_OutSize_Set(FRAM_WIDTH, FRAM_HIGH); 
-    printf("camera init done\n");
+    ESP_LOGI(TAG, "camera init done\n");
     fbuf = cam_attach();
     cam_start();
 }
@@ -250,12 +278,7 @@ extern "C" void app_main()
     ESP_LOGI(TAG, "[APP] Free memory: %d bytes", esp_get_free_heap_size());
     ESP_LOGI(TAG, "[APP] IDF version: %s", esp_get_idf_version());
 
-    esp_log_level_set("*", ESP_LOG_INFO);
-    esp_log_level_set("MQTT_CLIENT", ESP_LOG_VERBOSE);
-    esp_log_level_set("TRANSPORT_TCP", ESP_LOG_VERBOSE);
-    esp_log_level_set("TRANSPORT_SSL", ESP_LOG_VERBOSE);
-    esp_log_level_set("TRANSPORT", ESP_LOG_VERBOSE);
-    esp_log_level_set("OUTBOX", ESP_LOG_VERBOSE);
+    esp_log_level_set("*", ESP_LOG_ERROR);
 
     //Initialize NVS
     esp_err_t ret = nvs_flash_init();
@@ -265,8 +288,8 @@ extern "C" void app_main()
     }
     ESP_ERROR_CHECK(ret);
 
-    tcpip_adapter_init();
-    ESP_ERROR_CHECK( esp_event_loop_create_default() );
+    // tcpip_adapter_init();
+    // ESP_ERROR_CHECK( esp_event_loop_create_default() );
 
     // ESP_LOGI(TAG, "Initializing SNTP");
     // sntp_setoperatingmode(SNTP_OPMODE_POLL);
@@ -296,10 +319,11 @@ extern "C" void app_main()
 
     xTaskCreate(gui_task, "gui_task", 4096, NULL, 5, NULL);
 
-    // xTaskCreate(lua_task, "lua_task", 4096, NULL, 5, NULL);
+    xTaskCreate(stream_task, "stream_task", 4096, NULL, 5, NULL);
+    xTaskCreate(lua_task, "lua_task", 4096, NULL, 5, NULL);
 
-    vTaskDelay(1000 /portTICK_RATE_MS);
-    // wifi_init();
+    // vTaskDelay(1000 /portTICK_RATE_MS);
+    // // wifi_init();
 
     if (fbuf) {
         while (1) {
@@ -396,7 +420,6 @@ static void printTask(void*)
 
     vTaskDelay(2000 / portTICK_PERIOD_MS);
     while (true) {
-        // printf("Pitch: %+6.1f \t Roll: %+6.1f \t Yaw: %+6.1f \n", pitch, roll, yaw);
         if (GUI_PAGE_MONITOR == gui_get_page()) {
             iot_hts221_get_temperature(hts221, &temperature);
             iot_hts221_get_humidity(hts221, &humidity);
@@ -416,8 +439,8 @@ static void printTask(void*)
             }
         }
         last_timeinfo = timeinfo;
-        // printf("temperature: %f\n humidity: %f\r\n", (float)(temperature/10), (float)(humidity/10));
-        // printf("light: %f\n", light);
+        ESP_LOGI(TAG, "temperature: %f\n humidity: %f\r\n", (float)(temperature/10), (float)(humidity/10));
+        ESP_LOGI(TAG, "light: %f\n", light);
         vTaskDelay(500 / portTICK_PERIOD_MS);
     }
 }
