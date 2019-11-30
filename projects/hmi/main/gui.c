@@ -495,6 +495,7 @@ static void body_page_led(lv_obj_t * parent)
 
 lv_obj_t * camera_canvas = NULL;
 lv_color_t *camera_canvas_buffer = NULL;
+int gui_camera_flag = 0;
 
 static void cam_roller_event_handler(lv_obj_t * obj, lv_event_t event)
 {
@@ -554,8 +555,7 @@ static void body_page_camera(lv_obj_t * parent)
     lv_obj_align(roller, NULL, LV_ALIGN_CENTER, 0, 0);
     lv_obj_set_event_cb(roller, cam_roller_event_handler);
     OV2640_Special_Effects(0);
-
-    
+    gui_camera_flag = 0;
 }
 
 lv_obj_t * terminal_ta = NULL;
@@ -655,10 +655,6 @@ static void text_area_event_handler(lv_obj_t * text_area, lv_event_t event)
 
 static void body_page_terminal(lv_obj_t * parent)
 {
-    if (terminal_buffer == NULL) {
-        terminal_buffer = (char *)heap_caps_malloc(512, MALLOC_CAP_SPIRAM);
-    }
-
     lv_obj_t * h = lv_cont_create(parent, NULL);
     lv_obj_set_click(h, true);
     lv_cont_set_fit(h, LV_FIT_TIGHT);
@@ -1048,22 +1044,24 @@ static void gui_task(lv_task_t * arg)
             case GUI_CAMERA_EVENT: {
                 if (gui_page == GUI_PAGE_CAMERA) {
                     lv_obj_invalidate(camera_canvas);
+                    gui_camera_flag = 0;
                 }
             }
             break;
 
             case GUI_TERMINAL_EVENT: {
                 if (gui_page == GUI_PAGE_TERMINAL) {
-                    // lv_obj_invalidate(camera_canvas);
-                    for (int x = 0; x < strlen(terminal_buffer); x++) {
-                        if (terminal_buffer[x] == '\b') {
+                    char *text = (char *)e.arg;
+                    for (int x = 0; x < strlen(text); x++) {
+                        if (text[x] == '\b') {
                             lv_ta_del_char(terminal_ta_dis);
-                        } else if (terminal_buffer[x] == '\r') {
+                        } else if (text[x] == '\r') {
                             x++;
                         } else {
-                            lv_ta_add_char(terminal_ta_dis, terminal_buffer[x]);
+                            lv_ta_add_char(terminal_ta_dis, text[x]);
                         }
                     }
+                    free(text);
                 }
             }
             break;
@@ -1139,6 +1137,7 @@ int gui_set_battery_value(gui_battery_value_t value, int ticks_wait)
 
 int gui_set_sensor(float temp, float hum, float light, int ticks_wait) 
 {
+    // 共享资源，可随时更新
     gui_sensor.temp = temp;
     gui_sensor.hum = hum;
     gui_sensor.light = light;
@@ -1155,18 +1154,33 @@ int gui_set_motion(float pitch, float roll, float yaw, int ticks_wait)
 
 int gui_set_camera(uint8_t* src, size_t len, int ticks_wait) 
 {
+    while (1) {
+        if (gui_camera_flag == 0) {
+            break;
+        } else {
+            vTaskDelay(10 / portTICK_RATE_MS);
+        }
+    }
+
     if (camera_canvas_buffer) {
         memcpy(camera_canvas_buffer, src, len);
+        gui_camera_flag = 1;
     }
+    
     return gui_event_send(GUI_CAMERA_EVENT, NULL, ticks_wait);
 }
 
 int gui_add_terminal_text(char* str, size_t len, int ticks_wait) 
 {
-    if (terminal_buffer) {
-        memcpy(terminal_buffer, str, len);
+    char *text = (char *)heap_caps_malloc(sizeof(char)*(len + 1), MALLOC_CAP_SPIRAM);
+    memcpy(text, str, len);
+
+    if (gui_event_send(GUI_TERMINAL_EVENT, text, ticks_wait) == 0) {
+        return 0;
+    } else {
+        free(text);
+        return -1;
     }
-    return gui_event_send(GUI_TERMINAL_EVENT, NULL, ticks_wait);
 }
 
 int gui_set_terminal_callback(gui_terminal_callback_t cb) 

@@ -36,7 +36,7 @@ static const char *TAG = "main";
 
 static constexpr gpio_num_t SDA = GPIO_NUM_3;
 static constexpr gpio_num_t SCL = GPIO_NUM_5;
-static constexpr uint32_t CLOCK_SPEED = 400000;  // range from 100 KHz ~ 400Hz
+static constexpr uint32_t CLOCK_SPEED = 100000;  // range from 100 KHz ~ 400Hz
 
 /* MPU configuration */
 
@@ -227,19 +227,30 @@ void stream_task(void *arg)
     while (1) { 
         if (ferr && ftell(ferr)) {
             fprintf(stderr, ferr_buffer);
-            gui_add_terminal_text(fout_buffer, strlen(fout_buffer) + 1, 10 / portTICK_RATE_MS);
+            gui_add_terminal_text(ferr_buffer, strlen(ferr_buffer) + 1, portMAX_DELAY);
             rewind (ferr);
-        } else if (fout && ftell(fout)) {
-            fprintf(stdout, fout_buffer);
-            gui_add_terminal_text(fout_buffer, strlen(fout_buffer) + 1, 10 / portTICK_RATE_MS);
-            rewind (fout);
-        } else if (fin && gui_terminal_queue && (fread(c, sizeof(char), 1, stdin) != 0 || xQueueReceive(gui_terminal_queue, &c[0], 0) != pdFAIL)) {
-            c[1] = '\0';
-            sprintf(fin_buffer, c);
-            rewind (fin);
-        } else {
-            vTaskDelay(10 / portTICK_RATE_MS);
         }
+
+        if (fout && ftell(fout)) {
+            fprintf(stdout, fout_buffer);
+            gui_add_terminal_text(fout_buffer, strlen(fout_buffer) + 1, portMAX_DELAY);
+            rewind (fout);
+        }
+
+        if (fin && gui_terminal_queue && (fread(c, sizeof(char), 1, stdin) != 0 || xQueueReceive(gui_terminal_queue, &c[0], 0) != pdFAIL)) {
+            fin_buffer[0] = c[0];
+            fin_buffer[1] = '\0';
+            rewind (fin);
+            while (1) { // Wait for Lua to complete input
+                if (ftell(fin) == 1) {
+                    break;
+                } else {
+                    vTaskDelay(10 / portTICK_RATE_MS);
+                }
+            }
+        }
+        
+        vTaskDelay(10 / portTICK_RATE_MS);
     }
 }
 
