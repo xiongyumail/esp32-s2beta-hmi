@@ -184,74 +184,59 @@ void gui_task(void *arg)
     }
 }
 
-FILE *fin = NULL;
-FILE *fout = NULL;
-FILE *ferr = NULL;
-char *fin_buffer = NULL;
-char *fout_buffer = NULL;
-char *ferr_buffer = NULL;
+static int mylib_hello(lua_State *L) 
+{
+  lua_pushstring(L, "hello esp lua!");
+  return 1;
+}
+
+static const luaL_Reg mylib[] = {
+  {"hello",     mylib_hello},
+  {NULL, NULL}
+};
+
+static int luaopen_mylib(lua_State *L) 
+{
+  luaL_newlib(L, mylib);
+  return 1;
+}
+
+static const luaL_Reg mylibs[] = {
+  {"mylib", luaopen_mylib},
+  {NULL, NULL}
+};
+
+size_t esp_lua_input_callback(char *str, size_t len) 
+{
+    char c[128] = {0};
+    size_t ret = 0;
+    if ((ret = fread(c, sizeof(char), 128, stdin)) > 0) {
+        memcpy(str, c, ret);
+    } else if (gui_terminal_queue && xQueueReceive(gui_terminal_queue, &c[0], 0) != pdFAIL) {
+        memcpy(str, c, 1);
+        ret = 1;
+    }
+    return ret;
+}
+
+size_t esp_lua_output_callback(char *str, size_t len) 
+{
+    size_t ret = 0;
+    gui_add_terminal_text(str, len, portMAX_DELAY);
+    ret = fwrite(str, sizeof(char), len, stdout);
+    return ret;
+}
 
 void lua_task(void *arg)
 {
     char *ESP_LUA_ARGV[2] = {"./lua", NULL};
 
-    fin_buffer  = (char *)calloc(sizeof(char) + 1, sizeof(char)); // We need check the character one by one.
-    fout_buffer = (char *)calloc(LUA_MAXINPUT + 1, sizeof(char));
-    ferr_buffer = (char *)calloc(LUA_MAXINPUT + 1, sizeof(char));
-    fin  = fmemopen(fin_buffer,  sizeof(char), "r");
-    fout = fmemopen(fout_buffer, LUA_MAXINPUT, "w");
-    ferr = fmemopen(ferr_buffer, LUA_MAXINPUT, "w");
-
-    esp_lua_init(fin, fout, ferr);
+    esp_lua_init(esp_lua_input_callback, esp_lua_output_callback, mylibs);
     while (1) {
-        // Clear Screen
-        fprintf(stdout, "\x1b[H\x1b[2J");
-        fprintf(stdout, "[esp@localhost ~]$ ./lua\n");
         esp_lua_main(1, ESP_LUA_ARGV);
     }
 
-    fclose(fin);
-    free(fin_buffer);
-    fclose(fout);
-    free(fout_buffer);
-    fclose(ferr);
-    free(ferr_buffer);
-
     vTaskDelete(NULL);
-}
-
-void stream_task(void *arg)
-{
-    char c[2];
-
-    while (1) { 
-        if (ferr && ftell(ferr)) {
-            fprintf(stderr, ferr_buffer);
-            gui_add_terminal_text(ferr_buffer, strlen(ferr_buffer) + 1, portMAX_DELAY);
-            rewind (ferr);
-        }
-
-        if (fout && ftell(fout)) {
-            fprintf(stdout, fout_buffer);
-            gui_add_terminal_text(fout_buffer, strlen(fout_buffer) + 1, portMAX_DELAY);
-            rewind (fout);
-        }
-
-        if (fin && gui_terminal_queue && (fread(c, sizeof(char), 1, stdin) != 0 || xQueueReceive(gui_terminal_queue, &c[0], 0) != pdFAIL)) {
-            fin_buffer[0] = c[0];
-            fin_buffer[1] = '\0';
-            rewind (fin);
-            while (1) { // Wait for Lua to complete input
-                if (ftell(fin) == 1) {
-                    break;
-                } else {
-                    vTaskDelay(10 / portTICK_RATE_MS);
-                }
-            }
-        }
-        
-        vTaskDelay(10 / portTICK_RATE_MS);
-    }
 }
 
 static uint8_t *fbuf = NULL;
@@ -330,8 +315,7 @@ extern "C" void app_main()
 
     xTaskCreate(gui_task, "gui_task", 4096, NULL, 5, NULL);
 
-    xTaskCreate(stream_task, "stream_task", 4096, NULL, 5, NULL);
-    xTaskCreate(lua_task, "lua_task", 4096, NULL, 5, NULL);
+    xTaskCreate(lua_task, "lua_task", 8192, NULL, 5, NULL);
 
     // vTaskDelay(1000 /portTICK_RATE_MS);
     // // wifi_init();

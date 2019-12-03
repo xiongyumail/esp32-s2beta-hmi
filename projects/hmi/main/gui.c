@@ -645,7 +645,7 @@ static void text_area_event_handler(lv_obj_t * text_area, lv_event_t event)
                 if (str[0] == 127) { // backspace
                    terminal_cb("\b", 2); 
                 } else {
-                    terminal_cb(str, 2);
+                   terminal_cb(str, 2);
                 }
             }
         }
@@ -678,7 +678,7 @@ static void body_page_terminal(lv_obj_t * parent)
     lv_ta_set_text_sel(terminal_ta_dis, true);
     lv_ta_set_cursor_click_pos(terminal_ta_dis, false);
     lv_ta_set_scroll_propagation(terminal_ta_dis, true);
-    lv_ta_set_text(terminal_ta_dis, "[esp@localhost ~]$ ./lua");
+    lv_ta_set_text(terminal_ta_dis, "");
 
     terminal_kb = lv_kb_create(h, NULL);
     lv_obj_set_size(terminal_kb, 520, 180);
@@ -688,6 +688,7 @@ static void body_page_terminal(lv_obj_t * parent)
     lv_obj_set_event_cb(terminal_kb, keyboard_event_cb);
 
     esp_lua_exit(1);
+    vTaskDelay(100 / portTICK_RATE_MS);
 }
 
 int sockfd = -1;
@@ -1052,6 +1053,11 @@ static void gui_task(lv_task_t * arg)
             case GUI_TERMINAL_EVENT: {
                 if (gui_page == GUI_PAGE_TERMINAL) {
                     char *text = (char *)e.arg;
+                    if (strstr(text, "\x1b[H\x1b[2J")) { // Clean Screen
+                        lv_ta_set_text(terminal_ta_dis, "");
+                        free(text);
+                        break;
+                    }
                     for (int x = 0; x < strlen(text); x++) {
                         if (text[x] == '\b') {
                             lv_ta_del_char(terminal_ta_dis);
@@ -1172,9 +1178,9 @@ int gui_set_camera(uint8_t* src, size_t len, int ticks_wait)
 
 int gui_add_terminal_text(char* str, size_t len, int ticks_wait) 
 {
-    char *text = (char *)heap_caps_malloc(sizeof(char)*(len + 1), MALLOC_CAP_SPIRAM);
+    char *text = (char *)heap_caps_calloc(1, sizeof(char)*(len + 1), MALLOC_CAP_SPIRAM);
     memcpy(text, str, len);
-
+    text[len] = '\0';
     if (gui_event_send(GUI_TERMINAL_EVENT, text, ticks_wait) == 0) {
         return 0;
     } else {
