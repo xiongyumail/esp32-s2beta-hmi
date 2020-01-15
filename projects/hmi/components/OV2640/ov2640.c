@@ -3,6 +3,9 @@
 #include "sccb.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "esp_log.h"
+
+static const char *TAG = "OV2640";
 
 #define delay_ms(a) vTaskDelay(a / portTICK_RATE_MS);
 
@@ -24,7 +27,7 @@ uint8_t OV2640_Init(uint8_t mode, uint8_t fre_double_en)
     reg |= SCCB_RD_Reg(OV2640_SENSOR_MIDL);	//读取厂家ID 低八位
 
     if (reg != OV2640_MID) {
-        printf("MID:%d\r\n", reg);
+        ESP_LOGI(TAG, "MID:%d\r\n", reg);
         return 1;
     }
 
@@ -33,7 +36,7 @@ uint8_t OV2640_Init(uint8_t mode, uint8_t fre_double_en)
     reg |= SCCB_RD_Reg(OV2640_SENSOR_PIDL);	//读取厂家ID 低八位
 
     if (reg != OV2640_PID) {
-        printf("HID:%d\r\n", reg);
+        ESP_LOGI(TAG, "HID:%d\r\n", reg);
         //return 2;
     }
 

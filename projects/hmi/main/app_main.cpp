@@ -34,58 +34,67 @@
 
 static const char *TAG = "main";
 
-static constexpr gpio_num_t SDA = GPIO_NUM_3;
-static constexpr gpio_num_t SCL = GPIO_NUM_5;
-static constexpr uint32_t CLOCK_SPEED = 100000;  // range from 100 KHz ~ 400Hz
+#define  LCD_WR  GPIO_NUM_34
+#define  LCD_RS  GPIO_NUM_1
+#define  LCD_RD  GPIO_NUM_2
+
+#define  LCD_D0  GPIO_NUM_35
+#define  LCD_D1  GPIO_NUM_37
+#define  LCD_D2  GPIO_NUM_36
+#define  LCD_D3  GPIO_NUM_39
+#define  LCD_D4  GPIO_NUM_38
+#define  LCD_D5  GPIO_NUM_41
+#define  LCD_D6  GPIO_NUM_40
+#define  LCD_D7  GPIO_NUM_45
+
+#define  LCD_D8   GPIO_NUM_21
+#define  LCD_D9   GPIO_NUM_18
+#define  LCD_D10  GPIO_NUM_17
+#define  LCD_D11  GPIO_NUM_16
+#define  LCD_D12  GPIO_NUM_15
+#define  LCD_D13  GPIO_NUM_14
+#define  LCD_D14  GPIO_NUM_13
+#define  LCD_D15  GPIO_NUM_12
+
+#define  CAM_XCLK  GPIO_NUM_0
+#define  CAM_PCLK  GPIO_NUM_12
+#define  CAM_VSYNC GPIO_NUM_14
+#define  CAM_HSYNC GPIO_NUM_13
+
+#define  CAM_D0 GPIO_NUM_18
+#define  CAM_D2 GPIO_NUM_17
+#define  CAM_D4 GPIO_NUM_8
+#define  CAM_D6 GPIO_NUM_10
+ 
+#define  CAM_D1 GPIO_NUM_21
+#define  CAM_D3 GPIO_NUM_7
+#define  CAM_D5 GPIO_NUM_9
+#define  CAM_D7 GPIO_NUM_11
+
+static const lcd_cam_config_t lcd_cam_config = {
+    .lcd_bit_width = 8,
+    .lcd_ws_pin    = LCD_WR,
+    .lcd_rs_pin    = LCD_RS,
+    .lcd_rd_pin    = LCD_RD,
+    .lcd_data_pin  = {LCD_D0, LCD_D1, LCD_D2, LCD_D3, LCD_D4, LCD_D5, LCD_D6, LCD_D7, LCD_D8, LCD_D9, LCD_D10, LCD_D11, LCD_D12, LCD_D13, LCD_D14, LCD_D15},
+    .cam_bit_width = 8,
+    .cam_xclk_pin  = CAM_XCLK,
+    .cam_pclk_pin  = CAM_PCLK,
+    .cam_vsync_pin = CAM_VSYNC,
+    .cam_hsync_pin = CAM_HSYNC,
+    .cam_data_pin  = {CAM_D0, CAM_D1, CAM_D2, CAM_D3, CAM_D4, CAM_D5, CAM_D6, CAM_D7}
+};
+
+static const gpio_num_t SDA = GPIO_NUM_3;
+static const gpio_num_t SCL = GPIO_NUM_5;
+static const uint32_t CLOCK_SPEED = 100000;  // range from 100 KHz ~ 400Hz
 
 /* MPU configuration */
 
-static constexpr uint16_t kSampleRate      = 10;  // Hz
-static constexpr mpud::accel_fs_t kAccelFS = mpud::ACCEL_FS_4G;
-static constexpr mpud::gyro_fs_t kGyroFS   = mpud::GYRO_FS_500DPS;
-static constexpr mpud::dlpf_t kDLPF        = mpud::DLPF_98HZ;
-
-static EventGroupHandle_t wifi_event_group;
-const static int CONNECTED_BIT = BIT0;
-
-static esp_err_t wifi_event_handler(void *ctx, system_event_t *event)
-{
-    switch (event->event_id) {
-        case SYSTEM_EVENT_STA_START:
-            esp_wifi_connect();
-            break;
-        case SYSTEM_EVENT_STA_GOT_IP:
-            xEventGroupSetBits(wifi_event_group, CONNECTED_BIT);
-            gui_set_wifi_state(true, 0);
-            break;
-        case SYSTEM_EVENT_STA_DISCONNECTED:
-            esp_wifi_connect();
-            xEventGroupClearBits(wifi_event_group, CONNECTED_BIT);
-            gui_set_wifi_state(false, 0);
-            break;
-        default:
-            break;
-    }
-    return ESP_OK;
-}
-
-static void wifi_init(void)
-{
-    wifi_event_group = xEventGroupCreate();
-    ESP_ERROR_CHECK(esp_event_loop_init(wifi_event_handler, NULL));
-    wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
-    ESP_ERROR_CHECK(esp_wifi_init(&cfg));
-    ESP_ERROR_CHECK(esp_wifi_set_storage(WIFI_STORAGE_RAM));
-    wifi_config_t wifi_config = {};  
-    memcpy(wifi_config.sta.ssid, CONFIG_WIFI_SSID, strlen(CONFIG_WIFI_SSID)+1);
-    memcpy(wifi_config.sta.password, CONFIG_WIFI_PASSWORD, strlen(CONFIG_WIFI_PASSWORD)+1);
-    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
-    ESP_ERROR_CHECK(esp_wifi_set_config(ESP_IF_WIFI_STA, &wifi_config));
-    ESP_LOGI(TAG, "start the WIFI SSID:[%s]", CONFIG_WIFI_SSID);
-    ESP_ERROR_CHECK(esp_wifi_start());
-    ESP_LOGI(TAG, "Waiting for wifi");
-    xEventGroupWaitBits(wifi_event_group, CONNECTED_BIT, false, true, portMAX_DELAY);
-}
+static const uint16_t kSampleRate      = 10;  // Hz
+static const mpud::accel_fs_t kAccelFS = mpud::ACCEL_FS_4G;
+static const mpud::gyro_fs_t kGyroFS   = mpud::GYRO_FS_500DPS;
+static const mpud::dlpf_t kDLPF        = mpud::DLPF_98HZ;
 
 static lv_disp_t  * disp;
 
@@ -135,12 +144,12 @@ static void gui_tick_task(void * arg)
 
 static QueueHandle_t gui_terminal_queue = NULL;
 
-void gui_terminal_callback(char *str, int len)
+static void gui_terminal_callback(char *str, int len)
 {
     xQueueSend(gui_terminal_queue, &str[0], 100 / portTICK_RATE_MS);
 }
 
-void gui_task(void *arg)
+static void gui_task(void *arg)
 {
     xTaskCreate(gui_tick_task, "gui_tick_task", 512, NULL, 10, NULL);
 
@@ -182,6 +191,33 @@ void gui_task(void *arg)
         lv_task_handler();
         vTaskDelay(10 / portTICK_RATE_MS);
     }
+    vTaskDelete(NULL);
+}
+
+static void cam_task(void *arg)
+{
+    if (OV2640_Init(0, 0) == 1) {
+        vTaskDelete(NULL);
+        return;
+    }
+	OV2640_RGB565_Mode(false);	//RGB565模式
+    OV2640_ImageSize_Set(800, 600);
+    OV2640_ImageWin_Set(0, 0, 800, 600);
+  	OV2640_OutSize_Set(FRAM_WIDTH, FRAM_HIGH); 
+    ESP_LOGI(TAG, "camera init done\n");
+    uint8_t *fbuf = cam_attach();
+    cam_start();
+    while (1) {
+        
+        if (GUI_PAGE_CAMERA == gui_get_page()) {
+            take_fram_lock();
+            gui_set_camera(fbuf, FRAM_WIDTH*FRAM_HIGH*2, portMAX_DELAY);
+            give_fram_lock();
+        } else {
+            vTaskDelay(1000 / portTICK_PERIOD_MS);
+        }
+    }
+    vTaskDelete(NULL);
 }
 
 static int mylib_hello(lua_State *L) 
@@ -206,7 +242,7 @@ static const luaL_Reg mylibs[] = {
   {NULL, NULL}
 };
 
-size_t esp_lua_input_callback(char *str, size_t len) 
+static size_t esp_lua_input_callback(char *str, size_t len) 
 {
     char c[128] = {0};
     size_t ret = 0;
@@ -219,7 +255,7 @@ size_t esp_lua_input_callback(char *str, size_t len)
     return ret;
 }
 
-size_t esp_lua_output_callback(char *str, size_t len) 
+static size_t esp_lua_output_callback(char *str, size_t len) 
 {
     size_t ret = 0;
     gui_add_terminal_text(str, len, portMAX_DELAY);
@@ -227,7 +263,7 @@ size_t esp_lua_output_callback(char *str, size_t len)
     return ret;
 }
 
-void lua_task(void *arg)
+static void lua_task(void *arg)
 {
     char *ESP_LUA_ARGV[2] = {"./lua", NULL};
 
@@ -239,27 +275,6 @@ void lua_task(void *arg)
     vTaskDelete(NULL);
 }
 
-static uint8_t *fbuf = NULL;
-
-void camera_hw_init(void)
-{
-    cam_xclk_attach();
-    ets_delay_us(200000);
-    if (OV2640_Init(0, 1) == 1) {
-        return;
-    }
-	OV2640_RGB565_Mode(false);	//RGB565模式
-    OV2640_ImageSize_Set(800, 600);
-    OV2640_ImageWin_Set(0, 0, 800, 600);
-  	OV2640_OutSize_Set(FRAM_WIDTH, FRAM_HIGH); 
-    ESP_LOGI(TAG, "camera init done\n");
-    fbuf = cam_attach();
-    cam_start();
-}
-
-static void mpuISR(void*);
-static void mpuTask(void*);
-static void printTask(void*);
 hts221_handle_t hts221;
 bh1750_handle_t bh1750;
 int16_t temperature;
@@ -268,79 +283,9 @@ float light;
 float roll{0}, pitch{0}, yaw{0};
 uint8_t mac[16];
 
-extern "C" void app_main() 
+static void mpu_task(void*)
 {
-    ESP_LOGI(TAG, "[APP] Startup..");
-    ESP_LOGI(TAG, "[APP] Free memory: %d bytes", esp_get_free_heap_size());
-    ESP_LOGI(TAG, "[APP] IDF version: %s", esp_get_idf_version());
-
-    esp_log_level_set("*", ESP_LOG_ERROR);
-
-    //Initialize NVS
-    esp_err_t ret = nvs_flash_init();
-    if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
-      ESP_ERROR_CHECK(nvs_flash_erase());
-      ret = nvs_flash_init();
-    }
-    ESP_ERROR_CHECK(ret);
-
-    // tcpip_adapter_init();
-    // ESP_ERROR_CHECK( esp_event_loop_create_default() );
-
-    // ESP_LOGI(TAG, "Initializing SNTP");
-    // sntp_setoperatingmode(SNTP_OPMODE_POLL);
-    // sntp_setservername(0, "pool.ntp.org");
-    // sntp_init();
-    // setenv("TZ", "CST-8", 1);
-    // tzset();
-
-    esp_read_mac(mac, ESP_MAC_WIFI_STA);
-    // Initialize I2C on port 0 using I2Cbus interface
-    i2c0.begin(SDA, SCL, CLOCK_SPEED);
-    i2c0.setTimeout(100);
-    hts221 = iot_hts221_create();
-    bh1750 = iot_bh1750_create(I2C_NUM_0, BH1750_I2C_ADDRESS_DEFAULT);
-    iot_bh1750_power_on(bh1750);
-    iot_bh1750_set_measure_mode(bh1750, BH1750_CONTINUE_4LX_RES);
-    WS2812B_init(RMT_CHANNEL_0, GPIO_NUM_4, 1);
-    wsRGB_t rgb = {0x0, 0x0, 0x0};
-    WS2812B_setLeds(&rgb, 1);
-
-    lcd_cam_init();
-    camera_hw_init();
-    // Create a task to setup mpu and read sensor data
-    xTaskCreate(mpuTask, "mpuTask", 4 * 1024, nullptr, 6, nullptr);
-    // Create a task to print angles
-    xTaskCreate(printTask, "printTask", 2 * 1024, nullptr, 5, nullptr);
-
-    xTaskCreate(gui_task, "gui_task", 4096, NULL, 5, NULL);
-
-    xTaskCreate(lua_task, "lua_task", 8192, NULL, 5, NULL);
-
-    // vTaskDelay(1000 /portTICK_RATE_MS);
-    // // wifi_init();
-
-    if (fbuf) {
-        while (1) {
-            
-            if (GUI_PAGE_CAMERA == gui_get_page()) {
-                take_fram_lock();
-                gui_set_camera(fbuf, FRAM_WIDTH*FRAM_HIGH*2, portMAX_DELAY);
-                give_fram_lock();
-            } else {
-                vTaskDelay(1000 / portTICK_PERIOD_MS);
-            }
-        }
-    }
-
-}
-
-/* Tasks */
-
-static MPU_t MPU;
-
-static void mpuTask(void*)
-{
+    MPU_t MPU;
     MPU.setBus(i2c0);
     MPU.setAddr(mpud::MPU_I2CADDRESS_AD0_LOW);
 
@@ -383,8 +328,8 @@ static void mpuTask(void*)
             MPU.motion(&rawAccel, &rawGyro);  // read both in one shot
             // Calculate tilt angle
             // range: (roll[-180,180]  pitch[-90,90]  yaw[-180,180])
-            constexpr double kRadToDeg = 57.2957795131;
-            constexpr float kDeltaTime = 1.f / kSampleRate;
+            const double kRadToDeg = 57.2957795131;
+            const float kDeltaTime = 1.f / kSampleRate;
             float gyroRoll             = roll + mpud::math::gyroDegPerSec(rawGyro.x, kGyroFS) * kDeltaTime;
             float gyroPitch            = pitch + mpud::math::gyroDegPerSec(rawGyro.y, kGyroFS) * kDeltaTime;
             float gyroYaw              = yaw + mpud::math::gyroDegPerSec(rawGyro.z, kGyroFS) * kDeltaTime;
@@ -402,16 +347,18 @@ static void mpuTask(void*)
         }
         vTaskDelay(100 / portTICK_PERIOD_MS);
     }
-    vTaskDelete(nullptr);
+    vTaskDelete(NULL);
 }
 
-static void printTask(void*)
+static void sensor_task(void*)
 {
-    float last_temperature = 0, last_humidity = 0;
-    uint8_t epaper_data[64];
-
     time_t now;
     struct tm timeinfo, last_timeinfo;
+
+    hts221 = iot_hts221_create();
+    bh1750 = iot_bh1750_create(I2C_NUM_0, BH1750_I2C_ADDRESS_DEFAULT);
+    iot_bh1750_power_on(bh1750);
+    iot_bh1750_set_measure_mode(bh1750, BH1750_CONTINUE_4LX_RES);
 
     vTaskDelay(2000 / portTICK_PERIOD_MS);
     while (true) {
@@ -438,4 +385,37 @@ static void printTask(void*)
         ESP_LOGI(TAG, "light: %f\n", light);
         vTaskDelay(500 / portTICK_PERIOD_MS);
     }
+    vTaskDelete(NULL);
+}
+
+extern "C" void app_main() 
+{
+    ESP_LOGI(TAG, "[APP] Startup..");
+    ESP_LOGI(TAG, "[APP] Free memory: %d bytes", esp_get_free_heap_size());
+    ESP_LOGI(TAG, "[APP] IDF version: %s", esp_get_idf_version());
+
+    esp_log_level_set("*", ESP_LOG_ERROR);
+
+    //Initialize NVS
+    esp_err_t ret = nvs_flash_init();
+    if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+      ESP_ERROR_CHECK(nvs_flash_erase());
+      ret = nvs_flash_init();
+    }
+    ESP_ERROR_CHECK(ret);
+
+    esp_read_mac(mac, ESP_MAC_WIFI_STA);
+    // Initialize I2C on port 0 using I2Cbus interface
+    i2c0.begin(SDA, SCL, CLOCK_SPEED);
+    i2c0.setTimeout(100);
+    WS2812B_init(RMT_CHANNEL_0, GPIO_NUM_4, 1);
+    wsRGB_t rgb = {0x0, 0x0, 0x0};
+    WS2812B_setLeds(&rgb, 1);
+    lcd_cam_init(&lcd_cam_config);
+
+    xTaskCreate(gui_task, "gui_task", 4096, NULL, 5, NULL);
+    xTaskCreate(cam_task, "cam_task", 4096, NULL, 5, NULL);
+    xTaskCreate(lua_task, "lua_task", 8192, NULL, 5, NULL);
+    xTaskCreate(mpu_task, "mpu_task", 4 * 1024, NULL, 5, NULL);
+    xTaskCreate(sensor_task, "sensor_task", 2 * 1024, NULL, 5, NULL);
 }

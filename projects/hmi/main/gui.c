@@ -1044,6 +1044,7 @@ static void gui_task(lv_task_t * arg)
 
             case GUI_CAMERA_EVENT: {
                 if (gui_page == GUI_PAGE_CAMERA) {
+                    memcpy(camera_canvas_buffer, (uint8_t *)e.arg, FRAM_WIDTH*FRAM_HIGH*2);
                     lv_obj_invalidate(camera_canvas);
                     gui_camera_flag = 0;
                 }
@@ -1065,7 +1066,7 @@ static void gui_task(lv_task_t * arg)
                             x++;
                         } else {
                             lv_ta_add_char(terminal_ta_dis, text[x]);
-                        }
+                        }                                                                                          
                     }
                     free(text);
                 }
@@ -1159,7 +1160,10 @@ int gui_set_motion(float pitch, float roll, float yaw, int ticks_wait)
 }
 
 int gui_set_camera(uint8_t* src, size_t len, int ticks_wait) 
-{
+{   
+    gui_camera_flag = 1;
+    gui_event_send(GUI_CAMERA_EVENT, src, ticks_wait);
+
     while (1) {
         if (gui_camera_flag == 0) {
             break;
@@ -1168,12 +1172,7 @@ int gui_set_camera(uint8_t* src, size_t len, int ticks_wait)
         }
     }
 
-    if (camera_canvas_buffer) {
-        memcpy(camera_canvas_buffer, src, len);
-        gui_camera_flag = 1;
-    }
-    
-    return gui_event_send(GUI_CAMERA_EVENT, NULL, ticks_wait);
+    return 0;
 }
 
 int gui_add_terminal_text(char* str, size_t len, int ticks_wait) 
