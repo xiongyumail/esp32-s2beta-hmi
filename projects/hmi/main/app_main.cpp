@@ -31,6 +31,7 @@
 #include "ov2640.h"
 #include "fram_cfg.h"
 #include "esp_lua.h"
+#include "esp_lua_lib.h"
 
 static const char *TAG = "main";
 
@@ -102,8 +103,9 @@ void IRAM_ATTR disp_flush(lv_disp_drv_t * disp_drv, const lv_area_t * area, lv_c
 {
     uint32_t len = (sizeof(uint16_t) * ((area->y2 - area->y1 + 1)*(area->x2 - area->x1 + 1)));
 
-    lcd_set_index(area->x1, area->y1, area->x2, area->y2);
-    lcd_write_data((uint16_t *)color_p, len);
+    // lcd_set_index(area->x1, area->y1, area->x2, area->y2);
+    // lcd_write_data((uint16_t *)color_p, len);
+    lcd_write(area->x1, area->y1, area->x2, area->y2, (uint16_t *)color_p, len);
 
     lv_disp_flush_ready(disp_drv);
 }
@@ -220,28 +222,6 @@ static void cam_task(void *arg)
     vTaskDelete(NULL);
 }
 
-static int mylib_hello(lua_State *L) 
-{
-  lua_pushstring(L, "hello esp lua!");
-  return 1;
-}
-
-static const luaL_Reg mylib[] = {
-  {"hello",     mylib_hello},
-  {NULL, NULL}
-};
-
-static int luaopen_mylib(lua_State *L) 
-{
-  luaL_newlib(L, mylib);
-  return 1;
-}
-
-static const luaL_Reg mylibs[] = {
-  {"mylib", luaopen_mylib},
-  {NULL, NULL}
-};
-
 static size_t esp_lua_input_callback(char *str, size_t len) 
 {
     char c[128] = {0};
@@ -263,13 +243,31 @@ static size_t esp_lua_output_callback(char *str, size_t len)
     return ret;
 }
 
-static void lua_task(void *arg)
-{
-    char *ESP_LUA_ARGV[2] = {"./lua", NULL};
+static const luaL_Reg mylibs[] = {
+    {"sys", esp_lib_sys},
+    {"net", esp_lib_net},
+    {"web", esp_lib_web},
+    {"mqtt", esp_lib_mqtt},
+    {"httpd", esp_lib_httpd},
+    {NULL, NULL}
+};
 
-    esp_lua_init(esp_lua_input_callback, esp_lua_output_callback, mylibs);
+char LUA_SCRIPT_INIT[] = " \
+assert(sys.init()) \
+dofile(\'/lua/init.lua\') \
+";
+
+void lua_task(void *arg)
+{
+    char *ESP_LUA_ARGV[5] = {"./lua", "-i", "-e", LUA_SCRIPT_INIT, NULL}; // enter interactive mode after executing 'script'
+
+    // esp_lua_init(esp_lua_input_callback, esp_lua_output_callback, mylibs);
+    esp_lua_init(NULL, NULL, mylibs);
+
     while (1) {
-        esp_lua_main(1, ESP_LUA_ARGV);
+        esp_lua_main(4, ESP_LUA_ARGV);
+        printf("lua exit\n");
+        vTaskDelay(1000 / portTICK_RATE_MS);
     }
 
     vTaskDelete(NULL);
@@ -281,7 +279,6 @@ int16_t temperature;
 int16_t humidity;
 float light;
 float roll{0}, pitch{0}, yaw{0};
-uint8_t mac[16];
 
 static void mpu_task(void*)
 {
@@ -388,23 +385,13 @@ static void sensor_task(void*)
     vTaskDelete(NULL);
 }
 
+#include "driver/gpio.h"
+
 extern "C" void app_main() 
 {
-    ESP_LOGI(TAG, "[APP] Startup..");
-    ESP_LOGI(TAG, "[APP] Free memory: %d bytes", esp_get_free_heap_size());
-    ESP_LOGI(TAG, "[APP] IDF version: %s", esp_get_idf_version());
+    xTaskCreate(lua_task, "lua_task", 10240, NULL, 5, NULL);
+    vTaskDelay(100 / portTICK_PERIOD_MS);
 
-    esp_log_level_set("*", ESP_LOG_ERROR);
-
-    //Initialize NVS
-    esp_err_t ret = nvs_flash_init();
-    if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
-      ESP_ERROR_CHECK(nvs_flash_erase());
-      ret = nvs_flash_init();
-    }
-    ESP_ERROR_CHECK(ret);
-
-    esp_read_mac(mac, ESP_MAC_WIFI_STA);
     // Initialize I2C on port 0 using I2Cbus interface
     i2c0.begin(SDA, SCL, CLOCK_SPEED);
     i2c0.setTimeout(100);
@@ -415,7 +402,6 @@ extern "C" void app_main()
 
     xTaskCreate(gui_task, "gui_task", 4096, NULL, 5, NULL);
     xTaskCreate(cam_task, "cam_task", 4096, NULL, 5, NULL);
-    xTaskCreate(lua_task, "lua_task", 8192, NULL, 5, NULL);
     xTaskCreate(mpu_task, "mpu_task", 4 * 1024, NULL, 5, NULL);
     xTaskCreate(sensor_task, "sensor_task", 2 * 1024, NULL, 5, NULL);
 }

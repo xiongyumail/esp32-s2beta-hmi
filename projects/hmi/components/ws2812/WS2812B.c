@@ -117,7 +117,7 @@ void WS2812B_setLeds(wsRGB_t* data, unsigned int size)
 
         }
 
-    rmt_write_items(channel, items, size * 24, false);
+    // rmt_write_items(channel, items, size * 24, false);
 }
 
 void WS2812B_deInit()

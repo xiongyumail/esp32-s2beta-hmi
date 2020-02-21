@@ -688,7 +688,6 @@ static void body_page_terminal(lv_obj_t * parent)
     lv_obj_set_event_cb(terminal_kb, keyboard_event_cb);
 
     esp_lua_exit(1);
-    vTaskDelay(100 / portTICK_RATE_MS);
 }
 
 int sockfd = -1;

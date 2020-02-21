@@ -7,8 +7,8 @@
 #include "esp_log.h"
 #include "soc/i2s_struct.h"
 #include "soc/apb_ctrl_reg.h"
-#include "esp32s2beta/rom/lldesc.h"
-#include "esp32s2beta/rom/cache.h"
+#include "esp32s2/rom/lldesc.h"
+#include "esp32s2/rom/cache.h"
 #include "soc/dport_access.h"
 #include "soc/dport_reg.h"
 #include "driver/ledc.h"
@@ -331,17 +331,86 @@ void IRAM_ATTR lcd_write_data(uint16_t *data, size_t len)
 #ifdef LCD_BUFFER_SIZE
     int x = 0;
     for (x = 0; x < len / LCD_BUFFER_SIZE; x++) {
-        memcpy(lcd_buffer, data, LCD_BUFFER_SIZE);
+        // gpio_set_level(GPIO_NUM_4, 1);
+        // memcpy(lcd_buffer, data, LCD_BUFFER_SIZE);
+        for (int i = 0; i < LCD_BUFFER_SIZE; i++) {
+            *((uint8_t *)lcd_buffer + i) = *((uint8_t *)data + i);
+        }
+        // gpio_set_level(GPIO_NUM_4, 0);
         i2s_lcd_dma_write(lcd_buffer, LCD_BUFFER_SIZE);
         data += LCD_BUFFER_SIZE / 2;
     }
     if (len % LCD_BUFFER_SIZE) {
-        memcpy(lcd_buffer, data, len % LCD_BUFFER_SIZE);
+        // memcpy(lcd_buffer, data, len % LCD_BUFFER_SIZE);
+        for (int i = 0; i < len % LCD_BUFFER_SIZE; i++) {
+            *((uint8_t *)lcd_buffer + i) = *((uint8_t *)data + i);
+        }
         i2s_lcd_dma_write(lcd_buffer, len % LCD_BUFFER_SIZE);
     }
 #else
     i2s_lcd_dma_write((uint8_t *)data, len);
 #endif
+}
+
+typedef struct {
+    int event;
+    uint16_t x_start;
+    uint16_t y_start;
+    uint16_t x_end;
+    uint16_t y_end;
+    uint16_t *data;
+    size_t len;
+} lcd_write_event_t;
+
+QueueHandle_t lcd_write_queue = NULL;
+
+void lcd_task(void *arg)
+{
+    lcd_write_event_t event;
+    lcd_write_queue = xQueueCreate(10, sizeof(lcd_write_event_t));
+    while (1) {
+        xQueueReceive(lcd_write_queue, &event, portMAX_DELAY);
+        // gpio_set_level(GPIO_NUM_4, 0);
+        lcd_set_index(event.x_start, event.y_start, event.x_end, event.y_end);
+        lcd_write_data(event.data, event.len);
+        free(event.data);
+        // gpio_set_level(GPIO_NUM_4, 1);
+    }
+
+    vTaskDelete(NULL);
+}
+
+void lcd_write(uint16_t x_start, uint16_t y_start, uint16_t x_end, uint16_t y_end, uint16_t *data, size_t len)
+{
+    if (lcd_write_queue == NULL) {
+        return;
+    }
+    int ret = -1;
+    lcd_write_event_t event;
+    while (1) {
+        event.data = malloc(sizeof(uint16_t) * len);
+        if (event.data) {
+            gpio_set_level(GPIO_NUM_4, 1);
+            // memcpy(event.data, data, sizeof(uint16_t) * len);
+            for (int i = 0; i < len; i++) {
+                event.data[i] = data[i];
+            }
+            gpio_set_level(GPIO_NUM_4, 0);
+            event.len = len;
+            event.x_start = x_start;
+            event.y_start = y_start;
+            event.x_end = x_end;
+            event.y_end = y_end;
+            ret = xQueueSend(lcd_write_queue, &event, portMAX_DELAY);
+            if (ret != pdTRUE) {
+                free(event.data);
+            }
+            return ;
+        } else {
+            vTaskDelay(10 / portTICK_PERIOD_MS);
+        }
+    }
+
 }
 
 void lcd_set_index(uint16_t x_start,uint16_t y_start,uint16_t x_end,uint16_t y_end)
@@ -862,14 +931,27 @@ uint8_t * cam_attach(void)
 
 void lcd_cam_init(const lcd_cam_config_t *config)
 {
-    lcd_cam_obj = (lcd_cam_obj_t *)heap_caps_malloc(sizeof(lcd_cam_obj_t), MALLOC_CAP_DMA);
+    gpio_config_t io_conf;
+    //disable interrupt
+    io_conf.intr_type = GPIO_INTR_DISABLE;
+    //set as output mode
+    io_conf.mode = GPIO_MODE_OUTPUT;
+    //bit mask of the pins that you want to set,e.g.GPIO18/19
+    io_conf.pin_bit_mask = 1ULL << GPIO_NUM_4;
+    //disable pull-down mode
+    io_conf.pull_down_en = GPIO_PULLDOWN_DISABLE;
+    //disable pull-up mode
+    io_conf.pull_up_en = GPIO_PULLUP_DISABLE;
+    //configure GPIO with the given settings
+    gpio_config(&io_conf);
+    lcd_cam_obj = (lcd_cam_obj_t *)heap_caps_malloc(sizeof(lcd_cam_obj_t), MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA);
     if (!lcd_cam_obj) {
         ESP_LOGI(TAG, "camera object malloc error\n");
         abort();
     }
     memset(lcd_cam_obj, 0, sizeof(lcd_cam_obj_t));
 #ifdef LCD_BUFFER_SIZE
-    lcd_buffer = (uint8_t *)heap_caps_malloc(LCD_BUFFER_SIZE, MALLOC_CAP_DMA);
+    lcd_buffer = (uint8_t *)heap_caps_malloc(LCD_BUFFER_SIZE, MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA);
 #endif
     memcpy(&lcd_cam_obj->config, config, sizeof(lcd_cam_config_t));
     lcd_tx_sem = xSemaphoreCreateBinary();
@@ -879,4 +961,5 @@ void lcd_cam_init(const lcd_cam_config_t *config)
     nt35510_init();
     nt35510_init();
     
+    xTaskCreate(lcd_task, "lcd_task", 1024, NULL, 8, NULL);
 }
