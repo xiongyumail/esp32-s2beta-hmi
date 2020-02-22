@@ -103,9 +103,9 @@ void IRAM_ATTR disp_flush(lv_disp_drv_t * disp_drv, const lv_area_t * area, lv_c
 {
     uint32_t len = (sizeof(uint16_t) * ((area->y2 - area->y1 + 1)*(area->x2 - area->x1 + 1)));
 
-    // lcd_set_index(area->x1, area->y1, area->x2, area->y2);
-    // lcd_write_data((uint16_t *)color_p, len);
-    lcd_write(area->x1, area->y1, area->x2, area->y2, (uint16_t *)color_p, len);
+    lcd_set_index(area->x1, area->y1, area->x2, area->y2);
+    lcd_write_data((uint16_t *)color_p, len);
+    // lcd_write(area->x1, area->y1, area->x2, area->y2, (uint16_t *)color_p, len);
 
     lv_disp_flush_ready(disp_drv);
 }
@@ -198,7 +198,7 @@ static void gui_task(void *arg)
 
 static void cam_task(void *arg)
 {
-    if (OV2640_Init(0, 0) == 1) {
+    if (OV2640_Init(0, 1) == 1) {
         vTaskDelete(NULL);
         return;
     }
