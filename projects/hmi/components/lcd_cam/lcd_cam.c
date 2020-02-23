@@ -17,10 +17,12 @@
 
 static const char *TAG = "lcd_cam";
 
-static lldesc_t lcd_dma[100] = {0};
-
+static lldesc_t *lcd_dma = NULL;
 static uint8_t *lcd_buffer = NULL;
-#define LCD_BUFFER_SIZE (8000)
+#define LCD_BUFFER_SIZE      (64000)
+#define LCD_HALF_BUFFER_SIZE (LCD_BUFFER_SIZE / 2)
+#define LCD_NODE_CNT         (LCD_BUFFER_SIZE / 4000)
+#define LCD_HALF_NODE_CNT    (LCD_NODE_CNT / 2)
 
 // #define FRAM_BUF_LINE (6)
 #define BUF_EOF_CNT  (FRAM_HIGH / FRAM_BUF_LINE)
@@ -52,20 +54,29 @@ static lldesc_t cam_dma[DMA_NODE_CNT] = {0};
 
 static SemaphoreHandle_t lcd_tx_sem = NULL;
 
-typedef struct {
-    uint16_t *data;
-    size_t len;
-    int end_flag;
-} lcd_write_event_t;
+static inline void lcd_give_tx_sem(int *woken)
+{
+#if 1
+    xSemaphoreGiveFromISR(lcd_tx_sem, woken);
+#else
+    lcd_tx_sem = 1;
+#endif
+}
 
-QueueHandle_t lcd_write_queue = NULL;
-
-uint8_t flag = 0;
+static inline void lcd_wait_tx_sem(void)
+{
+#if 1
+    xSemaphoreTake(lcd_tx_sem , (portTickType)portMAX_DELAY);
+#else
+    while (!lcd_tx_sem) {
+        __asm__ __volatile__("nop");
+    }
+    lcd_tx_sem = 0;
+#endif
+}
 
 void IRAM_ATTR lcd_cam_isr(void *arg)
 {
-    lldesc_t lcd_dma_event;
-    lldesc_t *lcd_dma_next;
     typeof(I2S0.int_st) int_st = I2S0.int_st;
     I2S0.int_clr.val = int_st.val;
     BaseType_t HPTaskAwoken = pdFALSE;
@@ -81,26 +92,11 @@ void IRAM_ATTR lcd_cam_isr(void *arg)
     }
 
     if (int_st.out_eof) {
-        lcd_dma_next = (lldesc_t *)I2S0.out_link_dscr_bf0;
-        if (lcd_dma_next && flag) {
-            
-            int ret = xQueueReceiveFromISR(lcd_write_queue, &lcd_dma_event, &HPTaskAwoken);
-            if (ret == pdTRUE) {
-                gpio_set_level(4, 0);
-                uint8_t *buf = lcd_dma_next->buf;
-                memcpy(buf, lcd_dma_event.buf, lcd_dma_event.length);
-                memcpy(lcd_dma_next, &lcd_dma_event, sizeof(lldesc_t));
-                lcd_dma_next->buf = buf;
-                gpio_set_level(4, 1);
-            } else {
-                lcd_dma_next->empty = NULL;
-                flag = 0;
-            }
+        lcd_give_tx_sem(&HPTaskAwoken);
+    }
 
-        } else {
-            xSemaphoreGiveFromISR(lcd_tx_sem, &HPTaskAwoken);
-        }
-
+    if (int_st.out_dscr_err) {
+        ets_printf("error\n");
     }
 
     if(HPTaskAwoken == pdTRUE) {
@@ -168,7 +164,7 @@ static void lcd_cam_config(void)
 
     // 配置采样率
     I2S0.sample_rate_conf.val = 0;
-    I2S0.sample_rate_conf.tx_bck_div_num = 2;
+    I2S0.sample_rate_conf.tx_bck_div_num = 4;
     I2S0.sample_rate_conf.tx_bits_mod = lcd_cam_obj->config.lcd_bit_width;
     I2S0.sample_rate_conf.rx_bck_div_num = 1;
     I2S0.sample_rate_conf.rx_bits_mod = lcd_cam_obj->config.cam_bit_width;
@@ -218,8 +214,10 @@ static void lcd_cam_config(void)
     I2S0.int_ena.val = 0;
     I2S0.int_clr.val = ~0;
 
+    I2S0.lc_conf.check_owner = 0;
+
     I2S0.int_ena.out_eof = 1;
-    // I2S0.int_ena.out_total_eof = 1;
+    I2S0.int_ena.out_dscr_err = 1;
 
     ESP_LOGI(TAG, "--------I2S version  %x\n", I2S0.date);
     esp_intr_alloc(ETS_I2S0_INTR_SOURCE, 0, lcd_cam_isr, NULL, NULL);
@@ -298,39 +296,85 @@ static void lcd_cam_set_pin(lcd_cam_config_t *config)
     cam_xclk_attach();
 }
 
-static inline void i2s_dma_start(void)
+static inline void i2s_dma_start(uint32_t dma_addr)
 {
+    I2S0.out_link.addr = dma_addr & 0xfffff;
     I2S0.conf.tx_reset = 1;
     I2S0.conf.tx_reset = 0;
     I2S0.out_link.start = 1;
     I2S0.conf.tx_start = 1;
-    xSemaphoreTake(lcd_tx_sem, portMAX_DELAY);
 }
 
-static inline void i2s_lcd_dma_write(uint8_t *buf, size_t length)
+void lcd_write_data(uint8_t *data, size_t len)
 {
-    int x = 0;
-    for (x = 0; x < length / 4000; x++) {
-        lcd_dma[x].size = 4000;
-        lcd_dma[x].length = 4000;
-        lcd_dma[x].buf = buf;
-        lcd_dma[x].eof = 0;
-        lcd_dma[x].empty = &lcd_dma[x+1];
-        buf += 4000;
-    }
-    if (length % 4000) {
-        lcd_dma[x].size = length % 4000;
-        lcd_dma[x].length = length % 4000;
-        lcd_dma[x].buf = buf;
-        lcd_dma[x].eof = 1;
-        lcd_dma[x].empty = NULL;
+    int x = 0, cnt = 0;
+    int start_pos = 0;
+    int end_pos = 0;
+    if (len > LCD_BUFFER_SIZE) {
+        gpio_set_level(4, 0);
+        for (x = 0; x < LCD_NODE_CNT; x++) {
+            lcd_dma[x].size = 4000;
+            lcd_dma[x].length = 4000;
+            lcd_dma[x].buf = (lcd_buffer + 4000 * x);
+            lcd_dma[x].eof = !((x + 1) % LCD_HALF_NODE_CNT);
+            lcd_dma[x].empty = &lcd_dma[(x + 1) % LCD_NODE_CNT];
+        }
+        memcpy(lcd_buffer, data, LCD_BUFFER_SIZE);
+        data += LCD_BUFFER_SIZE;
+        len -= LCD_BUFFER_SIZE;
+        i2s_dma_start(&lcd_dma[0]);
+        gpio_set_level(4, 1);
+        cnt = len / LCD_HALF_BUFFER_SIZE;
+        for (x = 0; x < cnt; x++) {
+            lcd_wait_tx_sem();
+            gpio_set_level(4, 0);
+            start_pos = (x % 2) * LCD_HALF_NODE_CNT;
+            end_pos = start_pos + (LCD_HALF_NODE_CNT - 1);
+            memcpy(lcd_dma[start_pos].buf, data, LCD_HALF_BUFFER_SIZE);
+            if (x == cnt - 1) {
+                lcd_dma[end_pos].empty = NULL;
+            }
+            data += LCD_HALF_BUFFER_SIZE;
+            gpio_set_level(4, 1);
+        }
+        cnt = len % LCD_HALF_BUFFER_SIZE;
+        if (cnt) {
+            lcd_wait_tx_sem();
+            gpio_set_level(4, 0);
+            start_pos = (x % 2) * LCD_HALF_NODE_CNT;
+            end_pos = start_pos + cnt / 4000;
+            memcpy(lcd_dma[start_pos].buf, data, cnt);
+            lcd_dma[end_pos].size = cnt;
+            lcd_dma[end_pos].length = cnt;
+            lcd_dma[end_pos].empty = NULL;
+            gpio_set_level(4, 1);
+        }
+        lcd_wait_tx_sem();
     } else {
-        lcd_dma[x-1].eof = 1;
-        lcd_dma[x-1].empty = NULL;
+        cnt = len / 4000;
+        memcpy(lcd_buffer, data, len);
+        for (x = 0; x < cnt; x++) {
+            lcd_dma[x].size = 4000;
+            lcd_dma[x].length = 4000;
+            lcd_dma[x].buf = (lcd_buffer + 4000 * x);
+            lcd_dma[x].eof = 0;
+            lcd_dma[x].empty = &lcd_dma[x+1];
+        }
+        cnt = len % 4000;
+        if (cnt) {
+            lcd_dma[x].size = cnt;
+            lcd_dma[x].length = cnt;
+            lcd_dma[x].buf = (lcd_buffer + 4000 * x);
+            lcd_dma[x].eof = 1;
+            lcd_dma[x].empty = NULL;
+        } else {
+            lcd_dma[x-1].eof = 1;
+            lcd_dma[x-1].empty = NULL;
+        }
+        
+        i2s_dma_start(&lcd_dma[0]);
+        lcd_wait_tx_sem();
     }
-
-    I2S0.out_link.addr = ((uint32_t)&lcd_dma[0]) & 0xfffff;
-    i2s_dma_start();
 }
 
 static void lcd_write_cmd_byte(uint16_t cmd)
@@ -343,7 +387,7 @@ static void lcd_write_cmd_byte(uint16_t cmd)
         
     }
     gpio_set_level(lcd_cam_obj->config.lcd_rs_pin, 0);
-    i2s_lcd_dma_write(&val, 2);
+    lcd_write_data(&val, 2);
     gpio_set_level(lcd_cam_obj->config.lcd_rs_pin, 1);
 }
 
@@ -357,67 +401,7 @@ static void lcd_write_reg(uint16_t cmd, uint16_t data)
     } else {
         val = data;
     }
-    i2s_lcd_dma_write(&val, 2);
-}
-
-void lcd_write_data(uint16_t *data, size_t len)
-{
-    int x = 0;
-
-    if (len <= 8000) {
-        for (x = 0; x < len / LCD_BUFFER_SIZE; x++) {
-            memcpy(lcd_buffer, data, LCD_BUFFER_SIZE);
-            i2s_lcd_dma_write(lcd_buffer, LCD_BUFFER_SIZE);
-            data += LCD_BUFFER_SIZE / 2;
-        }
-        if (len % LCD_BUFFER_SIZE) {
-            memcpy(lcd_buffer, data, len % LCD_BUFFER_SIZE);
-            i2s_lcd_dma_write(lcd_buffer, len % LCD_BUFFER_SIZE);
-        }
-    } else {
-        lcd_write_event_t event;
-        lldesc_t lcd_dma_event;
-        flag = 1;
-        // printf("write_data\n");
-        memcpy(lcd_buffer, data, 8000);
-
-        lcd_dma[0].size = 4000;
-        lcd_dma[0].length = 4000;
-        lcd_dma[0].buf = (uint8_t *)lcd_buffer;
-        lcd_dma[0].eof = 1;
-        lcd_dma[0].empty = &lcd_dma[1];
-        lcd_dma[1].size = 4000;
-        lcd_dma[1].length = 4000;
-        lcd_dma[1].buf = ((uint8_t *)lcd_buffer + 4000);
-        lcd_dma[1].eof = 1;
-        lcd_dma[1].empty = &lcd_dma[0];
-
-        data += 4000;
-        len  -= 8000;
-        for (x = 0; x < len / 4000; x++) {
-            lcd_dma_event.buf = data;
-            lcd_dma_event.size = 4000;
-            lcd_dma_event.length = 4000;
-            lcd_dma_event.eof = 1;
-            lcd_dma_event.empty = &lcd_dma[(x + 1) % 2];
-            data += 2000;
-            xQueueSend(lcd_write_queue, &lcd_dma_event, portMAX_DELAY);
-        }
-        if (len % 4000) {
-            lcd_dma_event.buf = data;
-            lcd_dma_event.size = len % 4000;
-            lcd_dma_event.length = len % 4000;
-            lcd_dma_event.eof = 1;
-            lcd_dma_event.empty = NULL;
-            xQueueSend(lcd_write_queue, &lcd_dma_event, portMAX_DELAY);
-        }
-
-        I2S0.out_link.addr = ((uint32_t)&lcd_dma[0]) & 0xfffff;
-        // printf("write_data_start\n");
-        i2s_dma_start();
-        flag = 0;
-    }
-
+    lcd_write_data(&val, 2);
 }
 
 void lcd_set_index(uint16_t x_start,uint16_t y_start,uint16_t x_end,uint16_t y_end)
@@ -951,16 +935,15 @@ void lcd_cam_init(const lcd_cam_config_t *config)
     io_conf.pull_up_en = GPIO_PULLUP_DISABLE;
     //configure GPIO with the given settings
     gpio_config(&io_conf);
-    lcd_write_queue = xQueueCreate(1000, sizeof(lldesc_t));
+    gpio_set_level(4, 1);
     lcd_cam_obj = (lcd_cam_obj_t *)heap_caps_malloc(sizeof(lcd_cam_obj_t), MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA);
     if (!lcd_cam_obj) {
         ESP_LOGI(TAG, "camera object malloc error\n");
         abort();
     }
     memset(lcd_cam_obj, 0, sizeof(lcd_cam_obj_t));
-#ifdef LCD_BUFFER_SIZE
+    lcd_dma = (lldesc_t *)heap_caps_malloc(sizeof(lldesc_t) * LCD_NODE_CNT, MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA);
     lcd_buffer = (uint8_t *)heap_caps_malloc(LCD_BUFFER_SIZE, MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA);
-#endif
     memcpy(&lcd_cam_obj->config, config, sizeof(lcd_cam_config_t));
     lcd_tx_sem = xSemaphoreCreateBinary();
 

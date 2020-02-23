@@ -104,7 +104,7 @@ void IRAM_ATTR disp_flush(lv_disp_drv_t * disp_drv, const lv_area_t * area, lv_c
     uint32_t len = (sizeof(uint16_t) * ((area->y2 - area->y1 + 1)*(area->x2 - area->x1 + 1)));
 
     lcd_set_index(area->x1, area->y1, area->x2, area->y2);
-    lcd_write_data((uint16_t *)color_p, len);
+    lcd_write_data((uint8_t *)color_p, len);
     // lcd_write(area->x1, area->y1, area->x2, area->y2, (uint16_t *)color_p, len);
 
     lv_disp_flush_ready(disp_drv);
@@ -198,7 +198,7 @@ static void gui_task(void *arg)
 
 static void cam_task(void *arg)
 {
-    if (OV2640_Init(0, 1) == 1) {
+    if (OV2640_Init(0, 0) == 1) {
         vTaskDelete(NULL);
         return;
     }
@@ -389,8 +389,8 @@ static void sensor_task(void*)
 
 extern "C" void app_main() 
 {
-    xTaskCreate(lua_task, "lua_task", 10240, NULL, 5, NULL);
-    vTaskDelay(100 / portTICK_PERIOD_MS);
+    // xTaskCreate(lua_task, "lua_task", 10240, NULL, 5, NULL);
+    // vTaskDelay(100 / portTICK_PERIOD_MS);
 
     // Initialize I2C on port 0 using I2Cbus interface
     i2c0.begin(SDA, SCL, CLOCK_SPEED);
@@ -400,8 +400,8 @@ extern "C" void app_main()
     WS2812B_setLeds(&rgb, 1);
     lcd_cam_init(&lcd_cam_config);
 
-    xTaskCreate(gui_task, "gui_task", 4096, NULL, 5, NULL);
+    xTaskCreate(gui_task, "gui_task", 4096, NULL, 8, NULL);
     xTaskCreate(cam_task, "cam_task", 4096, NULL, 5, NULL);
-    xTaskCreate(mpu_task, "mpu_task", 4 * 1024, NULL, 5, NULL);
-    xTaskCreate(sensor_task, "sensor_task", 2 * 1024, NULL, 5, NULL);
+    // xTaskCreate(mpu_task, "mpu_task", 4 * 1024, NULL, 5, NULL);
+    // xTaskCreate(sensor_task, "sensor_task", 2 * 1024, NULL, 5, NULL);
 }

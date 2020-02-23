@@ -20,9 +20,7 @@ typedef struct {
     uint8_t cam_data_pin[16];
 } lcd_cam_config_t;
 
-void lcd_write_data(uint16_t *data, size_t len);
-
-void lcd_write(uint16_t x_start, uint16_t y_start, uint16_t x_end, uint16_t y_end, uint16_t *data, size_t len);
+void lcd_write_data(uint8_t *data, size_t len);
 
 void lcd_set_index(uint16_t x_start,uint16_t y_start,uint16_t x_end,uint16_t y_end);
 
