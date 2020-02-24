@@ -19,14 +19,15 @@ static const char *TAG = "lcd_cam";
 
 static lldesc_t *lcd_dma = NULL;
 static uint8_t *lcd_buffer = NULL;
-#define LCD_BUFFER_SIZE      (64000)
+#define LCD_DMA_SIZE         (4000)
+#define LCD_BUFFER_SIZE      (8000)
 #define LCD_HALF_BUFFER_SIZE (LCD_BUFFER_SIZE / 2)
-#define LCD_NODE_CNT         (LCD_BUFFER_SIZE / 4000)
+#define LCD_NODE_CNT         (LCD_BUFFER_SIZE / LCD_DMA_SIZE)
 #define LCD_HALF_NODE_CNT    (LCD_NODE_CNT / 2)
 
 // #define FRAM_BUF_LINE (6)
 #define BUF_EOF_CNT  (FRAM_HIGH / FRAM_BUF_LINE)
-#define DMA_NODE_CNT  (10)
+#define DMA_NODE_CNT  (6)
 
 #define USE_FRAM_LOCK    (1)
 #define FRAM_BUFER_DEBUG (0)
@@ -54,27 +55,6 @@ static lldesc_t cam_dma[DMA_NODE_CNT] = {0};
 
 static SemaphoreHandle_t lcd_tx_sem = NULL;
 
-static inline void lcd_give_tx_sem(int *woken)
-{
-#if 1
-    xSemaphoreGiveFromISR(lcd_tx_sem, woken);
-#else
-    lcd_tx_sem = 1;
-#endif
-}
-
-static inline void lcd_wait_tx_sem(void)
-{
-#if 1
-    xSemaphoreTake(lcd_tx_sem , (portTickType)portMAX_DELAY);
-#else
-    while (!lcd_tx_sem) {
-        __asm__ __volatile__("nop");
-    }
-    lcd_tx_sem = 0;
-#endif
-}
-
 void IRAM_ATTR lcd_cam_isr(void *arg)
 {
     typeof(I2S0.int_st) int_st = I2S0.int_st;
@@ -92,7 +72,7 @@ void IRAM_ATTR lcd_cam_isr(void *arg)
     }
 
     if (int_st.out_eof) {
-        lcd_give_tx_sem(&HPTaskAwoken);
+        xSemaphoreGiveFromISR(lcd_tx_sem, &HPTaskAwoken);
     }
 
     if (int_st.out_dscr_err) {
@@ -164,7 +144,7 @@ static void lcd_cam_config(void)
 
     // 配置采样率
     I2S0.sample_rate_conf.val = 0;
-    I2S0.sample_rate_conf.tx_bck_div_num = 4;
+    I2S0.sample_rate_conf.tx_bck_div_num = 2;
     I2S0.sample_rate_conf.tx_bits_mod = lcd_cam_obj->config.lcd_bit_width;
     I2S0.sample_rate_conf.rx_bck_div_num = 1;
     I2S0.sample_rate_conf.rx_bits_mod = lcd_cam_obj->config.cam_bit_width;
@@ -307,74 +287,49 @@ static inline void i2s_dma_start(uint32_t dma_addr)
 
 void lcd_write_data(uint8_t *data, size_t len)
 {
-    int x = 0, cnt = 0;
-    int start_pos = 0;
+    int x = 0, cnt = 0, size = 0;
     int end_pos = 0;
-    if (len > LCD_BUFFER_SIZE) {
-        gpio_set_level(4, 0);
-        for (x = 0; x < LCD_NODE_CNT; x++) {
-            lcd_dma[x].size = 4000;
-            lcd_dma[x].length = 4000;
-            lcd_dma[x].buf = (lcd_buffer + 4000 * x);
-            lcd_dma[x].eof = !((x + 1) % LCD_HALF_NODE_CNT);
-            lcd_dma[x].empty = &lcd_dma[(x + 1) % LCD_NODE_CNT];
-        }
-        memcpy(lcd_buffer, data, LCD_BUFFER_SIZE);
-        data += LCD_BUFFER_SIZE;
-        len -= LCD_BUFFER_SIZE;
-        i2s_dma_start(&lcd_dma[0]);
-        gpio_set_level(4, 1);
-        cnt = len / LCD_HALF_BUFFER_SIZE;
-        for (x = 0; x < cnt; x++) {
-            lcd_wait_tx_sem();
-            gpio_set_level(4, 0);
-            start_pos = (x % 2) * LCD_HALF_NODE_CNT;
-            end_pos = start_pos + (LCD_HALF_NODE_CNT - 1);
-            memcpy(lcd_dma[start_pos].buf, data, LCD_HALF_BUFFER_SIZE);
-            if (x == cnt - 1) {
-                lcd_dma[end_pos].empty = NULL;
-            }
-            data += LCD_HALF_BUFFER_SIZE;
-            gpio_set_level(4, 1);
-        }
-        cnt = len % LCD_HALF_BUFFER_SIZE;
-        if (cnt) {
-            lcd_wait_tx_sem();
-            gpio_set_level(4, 0);
-            start_pos = (x % 2) * LCD_HALF_NODE_CNT;
-            end_pos = start_pos + cnt / 4000;
-            memcpy(lcd_dma[start_pos].buf, data, cnt);
-            lcd_dma[end_pos].size = cnt;
-            lcd_dma[end_pos].length = cnt;
-            lcd_dma[end_pos].empty = NULL;
-            gpio_set_level(4, 1);
-        }
-        lcd_wait_tx_sem();
-    } else {
-        cnt = len / 4000;
-        memcpy(lcd_buffer, data, len);
-        for (x = 0; x < cnt; x++) {
-            lcd_dma[x].size = 4000;
-            lcd_dma[x].length = 4000;
-            lcd_dma[x].buf = (lcd_buffer + 4000 * x);
-            lcd_dma[x].eof = 0;
-            lcd_dma[x].empty = &lcd_dma[x+1];
-        }
-        cnt = len % 4000;
-        if (cnt) {
-            lcd_dma[x].size = cnt;
-            lcd_dma[x].length = cnt;
-            lcd_dma[x].buf = (lcd_buffer + 4000 * x);
-            lcd_dma[x].eof = 1;
-            lcd_dma[x].empty = NULL;
-        } else {
-            lcd_dma[x-1].eof = 1;
-            lcd_dma[x-1].empty = NULL;
-        }
-        
-        i2s_dma_start(&lcd_dma[0]);
-        lcd_wait_tx_sem();
+    // 生成一段数据DMA链表
+    for (x = 0; x < LCD_NODE_CNT; x++) {
+        lcd_dma[x].size = LCD_DMA_SIZE;
+        lcd_dma[x].length = LCD_DMA_SIZE;
+        lcd_dma[x].buf = (lcd_buffer + LCD_DMA_SIZE * x);
+        lcd_dma[x].eof = !((x + 1) % LCD_HALF_NODE_CNT);
+        lcd_dma[x].empty = &lcd_dma[(x + 1) % LCD_NODE_CNT];
     }
+    lcd_dma[LCD_HALF_NODE_CNT - 1].empty = NULL;
+    lcd_dma[LCD_NODE_CNT - 1].empty = NULL;
+    cnt = len / LCD_HALF_BUFFER_SIZE;
+    // 启动信号
+    xSemaphoreGive(lcd_tx_sem);
+    // 处理完整一段数据， 乒乓操作
+    for (x = 0; x < cnt; x++) {
+        memcpy(lcd_dma[(x % 2) * LCD_HALF_NODE_CNT].buf, data, LCD_HALF_BUFFER_SIZE);
+        data += LCD_HALF_BUFFER_SIZE;
+        xSemaphoreTake(lcd_tx_sem , portMAX_DELAY);
+        i2s_dma_start(&lcd_dma[(x % 2) * LCD_HALF_NODE_CNT]);
+    }
+    cnt = len % LCD_HALF_BUFFER_SIZE;
+    // 处理剩余非完整段数据
+    if (cnt) {
+        memcpy(lcd_dma[(x % 2) * LCD_HALF_NODE_CNT].buf, data, cnt);
+        // 处理数据长度为 LCD_DMA_SIZE 的整数倍情况
+        if (cnt % LCD_DMA_SIZE) {
+            end_pos = (x % 2) * LCD_HALF_NODE_CNT + cnt / LCD_DMA_SIZE;
+            size = cnt % LCD_DMA_SIZE;
+        } else {
+            end_pos = (x % 2) * LCD_HALF_NODE_CNT + cnt / LCD_DMA_SIZE - 1;
+            size = LCD_DMA_SIZE;
+        }
+        // 处理尾节点，使其成为 DMA 尾
+        lcd_dma[end_pos].size = size;
+        lcd_dma[end_pos].length = size;
+        lcd_dma[end_pos].eof = 1;
+        lcd_dma[end_pos].empty = NULL;
+        xSemaphoreTake(lcd_tx_sem , portMAX_DELAY);
+        i2s_dma_start(&lcd_dma[(x % 2) * LCD_HALF_NODE_CNT]);
+    }
+    xSemaphoreTake(lcd_tx_sem , portMAX_DELAY);
 }
 
 static void lcd_write_cmd_byte(uint16_t cmd)
@@ -813,7 +768,7 @@ static void nt35510_init(void)
 static lcd_cam_obj_t* cam_dma_create(void)
 {
     for (int i = 0; i < DMA_NODE_CNT; i++) {
-        lcd_cam_obj->pfram[i] = (camera_fram_t *)malloc(sizeof(camera_fram_t));
+        lcd_cam_obj->pfram[i] = (camera_fram_t *)heap_caps_malloc(sizeof(camera_fram_t), MALLOC_CAP_DMA);
         if (!lcd_cam_obj->pfram[i]) {
             ESP_LOGI(TAG, "camera dma node buffer malloc error\n");
             abort();
@@ -922,28 +877,14 @@ uint8_t * cam_attach(void)
 
 void lcd_cam_init(const lcd_cam_config_t *config)
 {
-    gpio_config_t io_conf;
-    //disable interrupt
-    io_conf.intr_type = GPIO_INTR_DISABLE;
-    //set as output mode
-    io_conf.mode = GPIO_MODE_OUTPUT;
-    //bit mask of the pins that you want to set,e.g.GPIO18/19
-    io_conf.pin_bit_mask = 1ULL << GPIO_NUM_4;
-    //disable pull-down mode
-    io_conf.pull_down_en = GPIO_PULLDOWN_DISABLE;
-    //disable pull-up mode
-    io_conf.pull_up_en = GPIO_PULLUP_DISABLE;
-    //configure GPIO with the given settings
-    gpio_config(&io_conf);
-    gpio_set_level(4, 1);
-    lcd_cam_obj = (lcd_cam_obj_t *)heap_caps_malloc(sizeof(lcd_cam_obj_t), MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA);
+    lcd_cam_obj = (lcd_cam_obj_t *)heap_caps_malloc(sizeof(lcd_cam_obj_t), MALLOC_CAP_DMA);
     if (!lcd_cam_obj) {
         ESP_LOGI(TAG, "camera object malloc error\n");
         abort();
     }
     memset(lcd_cam_obj, 0, sizeof(lcd_cam_obj_t));
-    lcd_dma = (lldesc_t *)heap_caps_malloc(sizeof(lldesc_t) * LCD_NODE_CNT, MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA);
-    lcd_buffer = (uint8_t *)heap_caps_malloc(LCD_BUFFER_SIZE, MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA);
+    lcd_dma = (lldesc_t *)heap_caps_malloc(sizeof(lldesc_t) * LCD_NODE_CNT, MALLOC_CAP_DMA);
+    lcd_buffer = (uint8_t *)heap_caps_malloc(LCD_BUFFER_SIZE, MALLOC_CAP_DMA);
     memcpy(&lcd_cam_obj->config, config, sizeof(lcd_cam_config_t));
     lcd_tx_sem = xSemaphoreCreateBinary();
 

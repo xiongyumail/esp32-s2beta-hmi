@@ -1044,6 +1044,7 @@ static void gui_task(lv_task_t * arg)
             case GUI_CAMERA_EVENT: {
                 if (gui_page == GUI_PAGE_CAMERA) {
                     memcpy(camera_canvas_buffer, (uint8_t *)e.arg, FRAM_WIDTH*FRAM_HIGH*2);
+                    // lv_canvas_set_buffer(camera_canvas, e.arg, FRAM_WIDTH, FRAM_HIGH, LV_IMG_CF_TRUE_COLOR);
                     lv_obj_invalidate(camera_canvas);
                     gui_camera_flag = 0;
                 }

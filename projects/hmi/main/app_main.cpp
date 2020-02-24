@@ -105,7 +105,6 @@ void IRAM_ATTR disp_flush(lv_disp_drv_t * disp_drv, const lv_area_t * area, lv_c
 
     lcd_set_index(area->x1, area->y1, area->x2, area->y2);
     lcd_write_data((uint8_t *)color_p, len);
-    // lcd_write(area->x1, area->y1, area->x2, area->y2, (uint16_t *)color_p, len);
 
     lv_disp_flush_ready(disp_drv);
 }
@@ -198,7 +197,7 @@ static void gui_task(void *arg)
 
 static void cam_task(void *arg)
 {
-    if (OV2640_Init(0, 0) == 1) {
+    if (OV2640_Init(0, 1) == 1) {
         vTaskDelete(NULL);
         return;
     }
@@ -210,7 +209,10 @@ static void cam_task(void *arg)
     uint8_t *fbuf = cam_attach();
     cam_start();
     while (1) {
-        
+        // take_fram_lock();
+        // lcd_set_index(0, 0, FRAM_WIDTH - 1, FRAM_HIGH - 1);
+        // lcd_write_data((uint8_t *)fbuf, FRAM_WIDTH*FRAM_HIGH*2, 100 / portTICK_RATE_MS);  
+        // give_fram_lock();    
         if (GUI_PAGE_CAMERA == gui_get_page()) {
             take_fram_lock();
             gui_set_camera(fbuf, FRAM_WIDTH*FRAM_HIGH*2, portMAX_DELAY);
@@ -261,8 +263,8 @@ void lua_task(void *arg)
 {
     char *ESP_LUA_ARGV[5] = {"./lua", "-i", "-e", LUA_SCRIPT_INIT, NULL}; // enter interactive mode after executing 'script'
 
-    // esp_lua_init(esp_lua_input_callback, esp_lua_output_callback, mylibs);
-    esp_lua_init(NULL, NULL, mylibs);
+    esp_lua_init(esp_lua_input_callback, esp_lua_output_callback, mylibs);
+    // esp_lua_init(NULL, NULL, mylibs);
 
     while (1) {
         esp_lua_main(4, ESP_LUA_ARGV);
@@ -273,14 +275,7 @@ void lua_task(void *arg)
     vTaskDelete(NULL);
 }
 
-hts221_handle_t hts221;
-bh1750_handle_t bh1750;
-int16_t temperature;
-int16_t humidity;
-float light;
-float roll{0}, pitch{0}, yaw{0};
-
-static void mpu_task(void*)
+static void sensor_task(void*)
 {
     MPU_t MPU;
     MPU.setBus(i2c0);
@@ -319,6 +314,15 @@ static void mpu_task(void*)
     ESP_ERROR_CHECK(MPU.setDigitalLowPassFilter(kDLPF));
 
     mpud::raw_axes_t rawAccel, rawGyro;
+
+    int16_t temperature;
+    int16_t humidity;
+    float light;
+    float roll{0}, pitch{0}, yaw{0};
+    hts221_handle_t hts221 = iot_hts221_create();
+    bh1750_handle_t bh1750 = iot_bh1750_create(I2C_NUM_0, BH1750_I2C_ADDRESS_DEFAULT);
+    iot_bh1750_power_on(bh1750);
+    iot_bh1750_set_measure_mode(bh1750, BH1750_CONTINUE_4LX_RES);
     // Reading Loop
     while (true) {
         if (GUI_PAGE_MOTION == gui_get_page()) {
@@ -342,23 +346,6 @@ static void mpu_task(void*)
             else if (yaw < -180.f)
                 yaw += 360.f;
         }
-        vTaskDelay(100 / portTICK_PERIOD_MS);
-    }
-    vTaskDelete(NULL);
-}
-
-static void sensor_task(void*)
-{
-    time_t now;
-    struct tm timeinfo, last_timeinfo;
-
-    hts221 = iot_hts221_create();
-    bh1750 = iot_bh1750_create(I2C_NUM_0, BH1750_I2C_ADDRESS_DEFAULT);
-    iot_bh1750_power_on(bh1750);
-    iot_bh1750_set_measure_mode(bh1750, BH1750_CONTINUE_4LX_RES);
-
-    vTaskDelay(2000 / portTICK_PERIOD_MS);
-    while (true) {
         if (GUI_PAGE_MONITOR == gui_get_page()) {
             iot_hts221_get_temperature(hts221, &temperature);
             iot_hts221_get_humidity(hts221, &humidity);
@@ -367,41 +354,27 @@ static void sensor_task(void*)
         } else if (GUI_PAGE_MOTION == gui_get_page()) {
             gui_set_motion(pitch, roll, yaw, 1000);
         }
-
-        time(&now);
-        localtime_r(&now, &timeinfo);
-        if (timeinfo.tm_year < (2016 - 1900)) {
-            // ESP_LOGE(TAG, "The current date/time error");
-        } else {
-            if (timeinfo.tm_sec != last_timeinfo.tm_sec) {
-                gui_set_time_change(1000);
-            }
-        }
-        last_timeinfo = timeinfo;
         ESP_LOGI(TAG, "temperature: %f\n humidity: %f\r\n", (float)(temperature/10), (float)(humidity/10));
         ESP_LOGI(TAG, "light: %f\n", light);
-        vTaskDelay(500 / portTICK_PERIOD_MS);
+        vTaskDelay(100 / portTICK_PERIOD_MS);
     }
     vTaskDelete(NULL);
 }
 
-#include "driver/gpio.h"
-
 extern "C" void app_main() 
 {
-    // xTaskCreate(lua_task, "lua_task", 10240, NULL, 5, NULL);
-    // vTaskDelay(100 / portTICK_PERIOD_MS);
+    xTaskCreate(lua_task, "lua_task", 10240, NULL, 5, NULL);
+    vTaskDelay(100 / portTICK_PERIOD_MS);
 
     // Initialize I2C on port 0 using I2Cbus interface
     i2c0.begin(SDA, SCL, CLOCK_SPEED);
-    i2c0.setTimeout(100);
+    i2c0.setTimeout(1000);
     WS2812B_init(RMT_CHANNEL_0, GPIO_NUM_4, 1);
     wsRGB_t rgb = {0x0, 0x0, 0x0};
     WS2812B_setLeds(&rgb, 1);
     lcd_cam_init(&lcd_cam_config);
 
     xTaskCreate(gui_task, "gui_task", 4096, NULL, 8, NULL);
-    xTaskCreate(cam_task, "cam_task", 4096, NULL, 5, NULL);
-    // xTaskCreate(mpu_task, "mpu_task", 4 * 1024, NULL, 5, NULL);
-    // xTaskCreate(sensor_task, "sensor_task", 2 * 1024, NULL, 5, NULL);
+    xTaskCreate(cam_task, "cam_task", 2048, NULL, 5, NULL);
+    xTaskCreate(sensor_task, "sensor_task", 4 * 1024, NULL, 5, NULL);
 }
