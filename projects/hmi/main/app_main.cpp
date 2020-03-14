@@ -206,17 +206,20 @@ static void cam_task(void *arg)
     OV2640_ImageWin_Set(0, 0, 800, 600);
   	OV2640_OutSize_Set(FRAM_WIDTH, FRAM_HIGH); 
     ESP_LOGI(TAG, "camera init done\n");
-    uint8_t *fbuf = cam_attach();
-    cam_start();
+    uint16_t *cam_buf = (uint16_t *)heap_caps_malloc(sizeof(uint16_t) * FRAM_WIDTH * FRAM_HIGH, MALLOC_CAP_SPIRAM);
+    // uint8_t *fbuf = cam_attach();
+    // cam_start();
     while (1) {
+        // cam_read_data((uint8_t *)cam_buf, sizeof(uint16_t) * FRAM_WIDTH * FRAM_HIGH);
         // take_fram_lock();
-        // lcd_set_index(0, 0, FRAM_WIDTH - 1, FRAM_HIGH - 1);
-        // lcd_write_data((uint8_t *)fbuf, FRAM_WIDTH*FRAM_HIGH*2, 100 / portTICK_RATE_MS);  
+        // lcd_set_index(100, 100, 100 + FRAM_WIDTH - 1, 100 + FRAM_HIGH - 1);
+        // lcd_write_data((uint8_t *)cam_buf, FRAM_WIDTH*FRAM_HIGH*2);  
         // give_fram_lock();    
         if (GUI_PAGE_CAMERA == gui_get_page()) {
-            take_fram_lock();
-            gui_set_camera(fbuf, FRAM_WIDTH*FRAM_HIGH*2, portMAX_DELAY);
-            give_fram_lock();
+            // take_fram_lock();
+            cam_read_data((uint8_t *)cam_buf, sizeof(uint16_t) * FRAM_WIDTH * FRAM_HIGH);
+            gui_set_camera((uint8_t *)cam_buf, FRAM_WIDTH*FRAM_HIGH*2, portMAX_DELAY);
+            // give_fram_lock();
         } else {
             vTaskDelay(1000 / portTICK_PERIOD_MS);
         }
@@ -375,6 +378,6 @@ extern "C" void app_main()
     lcd_cam_init(&lcd_cam_config);
 
     xTaskCreate(gui_task, "gui_task", 4096, NULL, 8, NULL);
-    xTaskCreate(cam_task, "cam_task", 2048, NULL, 5, NULL);
+    xTaskCreate(cam_task, "cam_task", 2048, NULL, 8, NULL);
     xTaskCreate(sensor_task, "sensor_task", 4 * 1024, NULL, 5, NULL);
 }

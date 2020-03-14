@@ -17,116 +17,56 @@
 
 static const char *TAG = "lcd_cam";
 
-static lldesc_t *lcd_dma = NULL;
-static uint8_t *lcd_buffer = NULL;
 #define LCD_DMA_SIZE         (4000)
 #define LCD_BUFFER_SIZE      (8000)
 #define LCD_HALF_BUFFER_SIZE (LCD_BUFFER_SIZE / 2)
 #define LCD_NODE_CNT         (LCD_BUFFER_SIZE / LCD_DMA_SIZE)
 #define LCD_HALF_NODE_CNT    (LCD_NODE_CNT / 2)
+static lldesc_t *lcd_dma = NULL;
+static uint8_t *lcd_buffer = NULL;
+static SemaphoreHandle_t lcd_tx_sem = NULL;
 
-// #define FRAM_BUF_LINE (6)
-#define BUF_EOF_CNT  (FRAM_HIGH / FRAM_BUF_LINE)
-#define DMA_NODE_CNT  (6)
-
-#define USE_FRAM_LOCK    (1)
-#define FRAM_BUFER_DEBUG (0)
-
-typedef struct {
-    int fram_id;
-    int size;
-    uint8_t buf[FRAM_BUF_SIZE];
-} camera_fram_t;
+#define CAM_DMA_SIZE         (3840)
+#define CAM_BUFFER_SIZE      (7680)
+#define CAM_HALF_BUFFER_SIZE (CAM_BUFFER_SIZE / 2)
+#define CAM_NODE_CNT         (CAM_BUFFER_SIZE / CAM_DMA_SIZE)
+#define CAM_HALF_NODE_CNT    (CAM_NODE_CNT / 2)
+static lldesc_t *cam_dma = NULL;
+static uint8_t *cam_buffer = NULL;
+static SemaphoreHandle_t cam_rx_sem = NULL;
 
 typedef struct {
     lcd_cam_config_t config;
-    int loop_cnt;
-    int fram_id;
-    xQueueHandle queue;
-    SemaphoreHandle_t disp_mux;
-    SemaphoreHandle_t update_mux;
-    camera_fram_t *pfram[DMA_NODE_CNT];
-    uint8_t *pbuf;
 } lcd_cam_obj_t;
 
 static lcd_cam_obj_t *lcd_cam_obj = NULL;
-
-static lldesc_t cam_dma[DMA_NODE_CNT] = {0};
-
-static SemaphoreHandle_t lcd_tx_sem = NULL;
 
 void IRAM_ATTR lcd_cam_isr(void *arg)
 {
     typeof(I2S0.int_st) int_st = I2S0.int_st;
     I2S0.int_clr.val = int_st.val;
     BaseType_t HPTaskAwoken = pdFALSE;
-    lcd_cam_obj_t* obj = lcd_cam_obj;
     if (int_st.in_suc_eof) {
-        obj->pfram[obj->fram_id]->fram_id = obj->loop_cnt;
-        obj->pfram[obj->fram_id + 1]->fram_id = obj->loop_cnt + 1;
-        xQueueSendFromISR(obj->queue, (void *)&obj->fram_id, &HPTaskAwoken);
-        obj->loop_cnt += 2;
-        obj->fram_id  += 2;
-        if (obj->fram_id == DMA_NODE_CNT) obj->fram_id = 0;
-        if (obj->loop_cnt == BUF_EOF_CNT) obj->loop_cnt = 0;
+        gpio_set_level(GPIO_NUM_4, 0);
+        gpio_set_level(GPIO_NUM_4, 1);
+        xSemaphoreGiveFromISR(cam_rx_sem, &HPTaskAwoken);
     }
 
     if (int_st.out_eof) {
         xSemaphoreGiveFromISR(lcd_tx_sem, &HPTaskAwoken);
     }
 
+    if (int_st.in_dscr_err) {
+        ets_printf("in error\n");
+    }
+
     if (int_st.out_dscr_err) {
-        ets_printf("error\n");
+        ets_printf("out error\n");
     }
 
     if(HPTaskAwoken == pdTRUE) {
         portYIELD_FROM_ISR();
     }
-}
-
-static void cam_enable(void)
-{
-    gpio_matrix_in(0x38, I2S0I_H_ENABLE_IDX, false);
-}
-
-static void cam_disable(void)
-{
-    gpio_matrix_in(0x30, I2S0I_H_ENABLE_IDX, false);
-}
-
-void cam_stop(void)
-{
-    cam_disable();
-    I2S0.conf.rx_start = 0;
-    I2S0.in_link.stop = 1;
-    I2S0.int_ena.in_suc_eof = 0;
-    I2S0.conf2.cam_sync_fifo_reset = 1;
-    I2S0.conf2.cam_sync_fifo_reset = 0;
-    I2S0.int_clr.in_suc_eof = 1;
-}
-
-void cam_start(void)
-{
-    I2S0.int_clr.in_suc_eof = 1;
-    I2S0.int_ena.in_suc_eof = 1;
-    I2S0.conf.rx_reset = 1;
-    I2S0.conf.rx_reset = 0;
-    I2S0.conf2.cam_sync_fifo_reset = 1;
-    I2S0.conf2.cam_sync_fifo_reset = 0;
-    I2S0.in_link.start = 1;
-    I2S0.conf.rx_start = 1;
-    cam_enable();
-}
-
-static void cam_obj_init(lcd_cam_obj_t *obj)
-{
-    obj->loop_cnt = 0;
-    obj->fram_id = 0;
-    for (int i = 0; i < DMA_NODE_CNT; i++) {
-        obj->pfram[i]->fram_id = 0;
-        obj->pfram[i]->size = FRAM_BUF_SIZE;
-    }
-    xQueueReset(obj->queue);
 }
 
 static void lcd_cam_config(void)
@@ -198,6 +138,7 @@ static void lcd_cam_config(void)
 
     I2S0.int_ena.out_eof = 1;
     I2S0.int_ena.out_dscr_err = 1;
+    I2S0.int_ena.in_dscr_err = 1;
 
     ESP_LOGI(TAG, "--------I2S version  %x\n", I2S0.date);
     esp_intr_alloc(ETS_I2S0_INTR_SOURCE, 0, lcd_cam_isr, NULL, NULL);
@@ -207,7 +148,7 @@ static void cam_xclk_attach(void)
 {
     ledc_timer_config_t ledc_timer = {
         .duty_resolution = LEDC_TIMER_1_BIT,
-        .freq_hz = 10000000,
+        .freq_hz = 8000000,
         .speed_mode = LEDC_LOW_SPEED_MODE,
         .timer_num = LEDC_TIMER_1
     };
@@ -330,6 +271,74 @@ void lcd_write_data(uint8_t *data, size_t len)
         i2s_dma_start(&lcd_dma[(x % 2) * LCD_HALF_NODE_CNT]);
     }
     xSemaphoreTake(lcd_tx_sem , portMAX_DELAY);
+}
+
+static void cam_enable(void)
+{
+    gpio_matrix_in(0x38, I2S0I_H_ENABLE_IDX, false);
+}
+
+static void cam_disable(void)
+{
+    gpio_matrix_in(0x30, I2S0I_H_ENABLE_IDX, false);
+}
+
+void cam_stop(void)
+{
+    I2S0.int_ena.in_suc_eof = 0;
+    cam_disable();
+    I2S0.conf.rx_start = 0;
+    I2S0.in_link.stop = 1;
+    I2S0.conf2.cam_sync_fifo_reset = 1;
+    I2S0.conf2.cam_sync_fifo_reset = 0;
+    I2S0.int_clr.in_suc_eof = 1;
+}
+
+void cam_start(void)
+{
+    I2S0.int_clr.in_suc_eof = 1;
+    I2S0.int_ena.in_suc_eof = 1;
+    I2S0.conf.rx_reset = 1;
+    I2S0.conf.rx_reset = 0;
+    I2S0.conf2.cam_sync_fifo_reset = 1;
+    I2S0.conf2.cam_sync_fifo_reset = 0;
+    I2S0.in_link.start = 1;
+    I2S0.conf.rx_start = 1;
+    cam_enable();
+}
+
+void cam_read_data(uint8_t *data, size_t len)
+{
+    int x = 0, cnt = 0, size = 0;
+    for (x = 0; x < CAM_NODE_CNT; x++) {
+        cam_dma[x].size = CAM_DMA_SIZE;
+        cam_dma[x].length = CAM_DMA_SIZE;
+        cam_dma[x].buf = (cam_buffer + CAM_DMA_SIZE * x);
+        cam_dma[x].eof = 1;
+        cam_dma[x].owner = 1;
+        cam_dma[x].empty = &cam_dma[(x + 1) % CAM_NODE_CNT];
+    }
+    // cam_dma[CAM_NODE_CNT - 1].empty = NULL;
+    I2S0.in_link.addr = ((uint32_t)&cam_dma[0]) & 0xfffff;
+    I2S0.rx_eof_num = CAM_HALF_BUFFER_SIZE;
+    xSemaphoreTake(cam_rx_sem , 0);
+    cam_start();
+    cnt = len / CAM_HALF_BUFFER_SIZE;
+    for (x = 0; x < cnt; x++) {
+        xSemaphoreTake(cam_rx_sem , portMAX_DELAY);
+        // gpio_set_level(GPIO_NUM_4, 0);
+        memcpy(data, cam_dma[(x % 2) * CAM_HALF_NODE_CNT].buf, CAM_HALF_BUFFER_SIZE);
+        data += CAM_HALF_BUFFER_SIZE;
+        // gpio_set_level(GPIO_NUM_4, 1);
+    }
+    cnt = len % CAM_HALF_BUFFER_SIZE;
+    if (cnt) {
+        xSemaphoreTake(cam_rx_sem , portMAX_DELAY);
+        // gpio_set_level(GPIO_NUM_4, 0);
+        memcpy(data, cam_dma[(x % 2) * CAM_HALF_NODE_CNT].buf, cnt);
+        // gpio_set_level(GPIO_NUM_4, 1);
+    }
+    cam_stop();
 }
 
 static void lcd_write_cmd_byte(uint16_t cmd)
@@ -765,128 +774,35 @@ static void nt35510_init(void)
     lcd_write_cmd_byte(0x2C00);
 }
 
-static lcd_cam_obj_t* cam_dma_create(void)
-{
-    for (int i = 0; i < DMA_NODE_CNT; i++) {
-        lcd_cam_obj->pfram[i] = (camera_fram_t *)heap_caps_malloc(sizeof(camera_fram_t), MALLOC_CAP_DMA);
-        if (!lcd_cam_obj->pfram[i]) {
-            ESP_LOGI(TAG, "camera dma node buffer malloc error\n");
-            abort();
-        }
-        memset(lcd_cam_obj->pfram[i], 0, sizeof(camera_fram_t));
-    }
-    lcd_cam_obj->disp_mux = xSemaphoreCreateBinary();
-    if (!lcd_cam_obj->disp_mux) {
-        ESP_LOGI(TAG, "disp mux create fail\n");
-        abort();
-    }
-    lcd_cam_obj->update_mux = xSemaphoreCreateBinary();
-    if (!lcd_cam_obj->update_mux) {
-        ESP_LOGI(TAG, "update mux create fail\n");
-        abort();
-    }
-    xSemaphoreGive(lcd_cam_obj->update_mux);
-    lcd_cam_obj->queue = xQueueCreate(10, sizeof(int));
-    if (!lcd_cam_obj->queue) {
-        ESP_LOGI(TAG, "queue create fail\n");
-        abort();
-    }
-    lcd_cam_obj->pbuf = (uint8_t *)heap_caps_calloc(1, FRAM_WIDTH * FRAM_HIGH * PIX_BYTE, MALLOC_CAP_SPIRAM);
-    if (!lcd_cam_obj->pbuf) {
-        ESP_LOGI(TAG, "camera fram buffer malloc error\n");
-        abort();
-    }
-    ESP_LOGI(TAG, "fram buf addr: %p\n", lcd_cam_obj->pbuf);
-    for (int i = 0; i < FRAM_WIDTH * FRAM_HIGH * PIX_BYTE; i++) {
-        lcd_cam_obj->pbuf[i] = ((i + 1) % 32);
-    }
-    for (int i = 0; i < FRAM_WIDTH * FRAM_HIGH * PIX_BYTE; i++) {
-        if (lcd_cam_obj->pbuf[i] != ((i + 1) % 32)) {
-            ESP_LOGI(TAG, "item error  %d  %d  %d\n", i, lcd_cam_obj->pbuf[i], ((i + 1) % 32));
-        }
-    }
-    ESP_LOGI(TAG, "fram buf test done\n");
-    cam_obj_init(lcd_cam_obj);
-    return lcd_cam_obj;
-}
-
-#if USE_FRAM_LOCK
-typedef enum {
-    FRAM_UNLOCK,
-    FRAM_LOCK,
-    FRAM_IN_PROGRESS,
-} fram_sta_t;
-
-fram_sta_t fram_status = FRAM_UNLOCK;
-#endif
-
-//Copy fram from DMA buffer to fram buffer
-static void cam_fram_copy_task(void *param)
-{
-    lcd_cam_obj_t* obj = (lcd_cam_obj_t*)param;
-    int id = 0;
-    while (1) {
-        if (xSemaphoreTake(obj->update_mux, (portTickType)10) != pdTRUE) {
-            xQueueReceive(obj->queue, (void *)&id, (portTickType)portMAX_DELAY);
-        } else {
-            while (1) {
-                xQueueReceive(obj->queue, (void *)&id, (portTickType)portMAX_DELAY);
-                if (fram_status != FRAM_IN_PROGRESS && obj->pfram[id]->fram_id != 0) {
-                    continue;
-                }
-                fram_status = FRAM_IN_PROGRESS;
-                // ESP_LOGI(TAG, "%d %d\n", obj->pfram[id]->fram_id, obj->pfram[id + 1]->fram_id);
-                memcpy(obj->pbuf + obj->pfram[id]->fram_id * FRAM_BUF_SIZE, obj->pfram[id]->buf, FRAM_BUF_SIZE);
-                memcpy(obj->pbuf + obj->pfram[id + 1]->fram_id * FRAM_BUF_SIZE, obj->pfram[id + 1]->buf, FRAM_BUF_SIZE);
-                if (obj->pfram[id + 1]->fram_id == BUF_EOF_CNT - 1) {
-                    xSemaphoreGive(obj->disp_mux);
-                    fram_status = FRAM_LOCK;
-                    break;
-                }
-            }
-        }
-    }
-}
-
-void take_fram_lock(void)
-{
-    xSemaphoreTake(lcd_cam_obj->disp_mux, (portTickType)portMAX_DELAY);
-}
-
-void give_fram_lock(void)
-{
-    xSemaphoreGive(lcd_cam_obj->update_mux);
-}
-
-uint8_t * cam_attach(void)
-{
-    cam_dma_create();
-    for (int i = 0; i < DMA_NODE_CNT; i++) {
-        cam_dma[i].size = FRAM_BUF_SIZE;
-        cam_dma[i].length = FRAM_BUF_SIZE;
-        cam_dma[i].eof = 1;
-        cam_dma[i].owner = 1;
-        cam_dma[i].buf = lcd_cam_obj->pfram[i]->buf;
-        cam_dma[i].empty = &cam_dma[(i + 1) % DMA_NODE_CNT];
-    }
-    xTaskCreate(cam_fram_copy_task, "cam_fram_copy_task", 1024 * 4, (void *)lcd_cam_obj, 8, NULL);
-    I2S0.in_link.addr = ((uint32_t)&cam_dma[0]) & 0xfffff;
-    I2S0.rx_eof_num = FRAM_BUF_SIZE * 2;
-    return lcd_cam_obj->pbuf;
-}
-
 void lcd_cam_init(const lcd_cam_config_t *config)
 {
+    gpio_config_t io_conf;
+    //disable interrupt
+    io_conf.intr_type = GPIO_PIN_INTR_DISABLE;
+    //set as output mode
+    io_conf.mode = GPIO_MODE_OUTPUT;
+    //bit mask of the pins that you want to set,e.g.GPIO18/19
+    io_conf.pin_bit_mask = 1ULL << GPIO_NUM_4;
+    //disable pull-down mode
+    io_conf.pull_down_en = 0;
+    //disable pull-up mode
+    io_conf.pull_up_en = 0;
+    //configure GPIO with the given settings
+    gpio_config(&io_conf);
+    gpio_set_level(GPIO_NUM_4, 1);
     lcd_cam_obj = (lcd_cam_obj_t *)heap_caps_malloc(sizeof(lcd_cam_obj_t), MALLOC_CAP_DMA);
     if (!lcd_cam_obj) {
         ESP_LOGI(TAG, "camera object malloc error\n");
         abort();
     }
     memset(lcd_cam_obj, 0, sizeof(lcd_cam_obj_t));
+    memcpy(&lcd_cam_obj->config, config, sizeof(lcd_cam_config_t));
     lcd_dma = (lldesc_t *)heap_caps_malloc(sizeof(lldesc_t) * LCD_NODE_CNT, MALLOC_CAP_DMA);
     lcd_buffer = (uint8_t *)heap_caps_malloc(LCD_BUFFER_SIZE, MALLOC_CAP_DMA);
-    memcpy(&lcd_cam_obj->config, config, sizeof(lcd_cam_config_t));
+    cam_dma = (lldesc_t *)heap_caps_malloc(sizeof(lldesc_t) * CAM_NODE_CNT, MALLOC_CAP_DMA);
+    cam_buffer = (uint8_t *)heap_caps_malloc(CAM_BUFFER_SIZE, MALLOC_CAP_DMA);
     lcd_tx_sem = xSemaphoreCreateBinary();
+    cam_rx_sem = xSemaphoreCreateBinary();
 
     lcd_cam_set_pin(&lcd_cam_obj->config);
     lcd_cam_config();
